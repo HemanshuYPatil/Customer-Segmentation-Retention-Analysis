@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from pathlib import Path
 import argparse
 import yaml
@@ -11,6 +13,7 @@ import pandas as pd
 
 from config import get_config, get_paths
 from data_pipeline import clean_transactions, load_raw_transactions, standardize_columns
+from storage import get_b2_client, upload_files
 from features import build_rfm_features, build_time_split_features
 from modeling import (
     ModelArtifacts,
@@ -21,6 +24,7 @@ from modeling import (
     train_segmentation,
 )
 from reporting import build_segment_summary, recommend_actions, write_strategic_report
+from firestore_client import write_training_metadata, write_segment_summary, write_model_registry
 
 
 def _load_mapping(mapping_path: Path) -> dict:
@@ -35,6 +39,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train segmentation and churn models.")
     parser.add_argument("--data-path", type=str, default=None)
     parser.add_argument("--mapping-path", type=str, default=None)
+    parser.add_argument("--tenant-id", type=str, default="local")
     args = parser.parse_args()
 
     paths = get_paths()
@@ -63,6 +68,7 @@ def main() -> None:
 
     modeling_df = modeling_df[modeling_df["frequency"] >= config.min_transactions].copy()
 
+    run_id = str(uuid.uuid4())
     mlflow.set_experiment(config.mlflow_experiment)
     with mlflow.start_run(run_name="customer_segmentation_retention"):
         mlflow.log_params(
@@ -143,6 +149,47 @@ def main() -> None:
         print("Churn metrics:", churn_metrics)
         print("LTV metrics:", ltv_metrics)
         print(f"Selected churn model for API: {best_model_name}")
+
+        b2_bucket = os.getenv("B2_BUCKET")
+        client = get_b2_client()
+        if client and b2_bucket:
+            prefix = f"tenants/{args.tenant_id}/models"
+            local_paths = [
+                paths.artifacts / "scaler.joblib",
+                paths.artifacts / "kmeans.joblib",
+                paths.artifacts / "churn_logreg.joblib",
+                paths.artifacts / "churn_xgb.joblib",
+                paths.artifacts / "churn_best.joblib",
+                paths.artifacts / "ltv_xgb.joblib",
+                paths.artifacts / "segment_summary.csv",
+                paths.artifacts / "feature_store.csv",
+            ]
+            upload_files(client, b2_bucket, local_paths, prefix)
+            artifact_prefix = f"b2://{b2_bucket}/{prefix}"
+        else:
+            artifact_prefix = str(paths.artifacts)
+
+        write_training_metadata(
+            tenant_id=args.tenant_id,
+            run_id=run_id,
+            metrics={**churn_metrics, **ltv_metrics},
+            artifact_prefix=artifact_prefix,
+            dataset_path=str(data_file),
+            mapping_path=str(args.mapping_path) if args.mapping_path else None,
+        )
+        model_name = f"{Path(data_file).name} ({run_id[:8]})"
+        write_model_registry(
+            tenant_id=args.tenant_id,
+            model_id=run_id,
+            name=model_name,
+            metrics={**churn_metrics, **ltv_metrics},
+            artifact_prefix=artifact_prefix,
+        )
+        write_segment_summary(
+            tenant_id=args.tenant_id,
+            run_id=run_id,
+            summary_rows=segment_summary.to_dict(orient="records"),
+        )
 
 
 if __name__ == "__main__":

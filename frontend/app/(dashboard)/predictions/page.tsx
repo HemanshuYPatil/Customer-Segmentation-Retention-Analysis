@@ -1,187 +1,155 @@
 ﻿"use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { api } from "@/services/api";
+import Link from "next/link";
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/components/auth-provider";
+import { useToast } from "@/components/ui/toast";
 
-const modelOptions = [
-  { id: "mdl-2026-01-27-01", label: "Jan 27, 2026 - Retail v3 (Latest)" },
-  { id: "mdl-2026-01-12-02", label: "Jan 12, 2026 - Ecom pilot" },
-  { id: "mdl-2025-12-20-01", label: "Dec 20, 2025 - Wholesale" }
-];
-
-const batchRuns = [
-  {
-    id: "batch-2026-01-27-01",
-    name: "Retail v3 - Full dataset",
-    model: "Retail v3",
-    queuedAt: "Jan 27, 2026 15:05",
-    status: "completed",
-    customers: 12480,
-    highRisk: 368,
-    avgChurn: 0.31
-  },
-  {
-    id: "batch-2026-01-20-02",
-    name: "Ecom pilot - January refresh",
-    model: "Ecom pilot",
-    queuedAt: "Jan 20, 2026 10:12",
-    status: "completed",
-    customers: 8620,
-    highRisk: 290,
-    avgChurn: 0.28
-  },
-  {
-    id: "batch-2026-01-14-01",
-    name: "Wholesale - Q1 backlog",
-    model: "Wholesale",
-    queuedAt: "Jan 14, 2026 08:44",
-    status: "queued",
-    customers: 6430,
-    highRisk: 210,
-    avgChurn: 0.34
+function formatTimestamp(value: any) {
+  if (!value) return "—";
+  if (typeof value === "string") return value;
+  if (value.seconds) {
+    return new Date(value.seconds * 1000).toLocaleString();
   }
-];
+  if (value._seconds) {
+    return new Date(value._seconds * 1000).toLocaleString();
+  }
+  if (value.toDate) {
+    return value.toDate().toLocaleString();
+  }
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return "—";
+  }
+}
 
 export default function PredictionsPage() {
-  const [query, setQuery] = useState("");
-  const [method, setMethod] = useState<"single" | "batch">("single");
-  const [selectedModel, setSelectedModel] = useState<string>(modelOptions[0].id);
+  const { user } = useAuth();
+  const { push } = useToast();
+  const [selectedModel, setSelectedModel] = useState("");
   const [customerId, setCustomerId] = useState("");
 
-  const filteredBatches = useMemo(() => {
-    if (!query) return batchRuns;
-    return batchRuns.filter((batch) =>
-      batch.name.toLowerCase().includes(query.toLowerCase())
-    );
-  }, [query]);
+  const modelsQuery = useQuery({
+    queryKey: ["models"],
+    queryFn: api.models
+  });
+
+  const predictionsQuery = useQuery({
+    queryKey: ["predictions"],
+    queryFn: api.predictions
+  });
+
+  const batches = useMemo(() => {
+    const items = predictionsQuery.data ?? [];
+    return items.filter((item: any) => item.payload?.mode === "batch");
+  }, [predictionsQuery.data]);
+
+  const runSingle = async () => {
+    if (!user) {
+      push({ title: "Login required.", tone: "error" });
+      return;
+    }
+    if (!selectedModel) {
+      push({ title: "Select a model.", tone: "error" });
+      return;
+    }
+    const id = Number(customerId);
+    if (!id) {
+      push({ title: "Enter a valid customer ID.", tone: "error" });
+      return;
+    }
+    await api.queueSinglePrediction({ tenant_id: user.uid, model_id: selectedModel, customer_id: id });
+    push({ title: "Single prediction started.", tone: "success" });
+  };
+
+  const runBatch = async () => {
+    if (!user) {
+      push({ title: "Login required.", tone: "error" });
+      return;
+    }
+    if (!selectedModel) {
+      push({ title: "Select a model.", tone: "error" });
+      return;
+    }
+    await api.queueBatchPrediction({ tenant_id: user.uid, model_id: selectedModel });
+    push({ title: "Batch prediction started.", tone: "success" });
+  };
 
   return (
     <Card>
       <CardTitle>Prediction Console</CardTitle>
-      <CardDescription>
-        Choose a prediction method, select a trained model, and run predictions.
-      </CardDescription>
+      <CardDescription>Run single or batch predictions and review batch history.</CardDescription>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-panelBorder bg-background p-4">
-          <p className="text-sm font-semibold">Prediction method</p>
-          <p className="mt-1 text-xs text-muted">
-            Single for one customer ID, batch for all customers in your dataset.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              variant={method === "single" ? "primary" : "secondary"}
-              onClick={() => setMethod("single")}
-            >
-              Single prediction
-            </Button>
-            <Button
-              variant={method === "batch" ? "primary" : "secondary"}
-              onClick={() => setMethod("batch")}
-            >
-              Batch processing
-            </Button>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-panelBorder bg-background p-4">
           <p className="text-sm font-semibold">Select model</p>
-          <p className="mt-1 text-xs text-muted">
-            Choose a previous training run to use for predictions.
-          </p>
+          <p className="mt-1 text-xs text-muted">Choose a trained model.</p>
           <div className="mt-3">
             <Select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-              {modelOptions.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.label}
+              <option value="">Select model</option>
+              {(modelsQuery.data ?? []).map((model) => (
+                <option key={model.model_id} value={model.model_id}>
+                  {model.name}
                 </option>
               ))}
             </Select>
           </div>
         </div>
 
-        {method === "single" ? (
-          <div className="rounded-xl border border-panelBorder bg-panel p-4 lg:col-span-2">
-            <p className="text-sm font-semibold">Single prediction</p>
-            <p className="mt-1 text-xs text-muted">
-              Enter a customer ID to run a one-off prediction with the selected model.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <Input
-                placeholder="Customer ID"
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-              />
-              <Button disabled={!customerId}>Run prediction</Button>
-            </div>
+        <div className="rounded-xl border border-panelBorder bg-panel p-4">
+          <p className="text-sm font-semibold">Single prediction</p>
+          <p className="mt-1 text-xs text-muted">Enter a customer ID to run a prediction.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Input
+              placeholder="Customer ID"
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+            />
+            <Button onClick={runSingle} disabled={!customerId}>
+              Run single prediction
+            </Button>
           </div>
-        ) : (
-          <div className="rounded-xl border border-panelBorder bg-panel p-4 lg:col-span-2">
-            <p className="text-sm font-semibold">Batch processing</p>
-            <p className="mt-1 text-xs text-muted">
-              Queue predictions for all customers using the selected model.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs text-muted">Dataset size</p>
-                <p className="text-sm font-semibold">12,480 customers</p>
-              </div>
-              <Button>Queue batch prediction</Button>
-            </div>
+        </div>
+
+        <div className="rounded-xl border border-panelBorder bg-panel p-4 lg:col-span-2">
+          <p className="text-sm font-semibold">Batch prediction</p>
+          <p className="mt-1 text-xs text-muted">Run predictions for all customers in the model dataset.</p>
+          <div className="mt-3">
+            <Button onClick={runBatch}>Run batch prediction</Button>
           </div>
-        )}
+        </div>
       </div>
 
       <div className="mt-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold">Latest batches</p>
-            <p className="text-xs text-muted">Select a batch to view full prediction details.</p>
-          </div>
-          <Input
-            placeholder="Search batch name"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="max-w-xs"
-          />
-        </div>
-
+        <p className="text-sm font-semibold">Batch runs</p>
+        <p className="text-xs text-muted">Open a batch run to view full results.</p>
         <div className="mt-3 grid gap-3">
-          {filteredBatches.map((batch) => (
+          {batches.length === 0 && (
+            <div className="rounded-xl border border-panelBorder bg-background p-4 text-sm text-muted">
+              No batch runs yet.
+            </div>
+          )}
+          {batches.map((item: any) => (
             <Link
-              key={batch.id}
-              href={`/predictions/batch/${batch.id}`}
+              key={item.prediction_id}
+              href={`/predictions/batch/${item.prediction_id}`}
               className="rounded-xl border border-panelBorder bg-background p-4 transition hover:border-accent/60"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold">{batch.name}</p>
+                  <p className="text-sm font-semibold">Batch Run</p>
                   <p className="text-xs text-muted">
-                    Model: {batch.model} · Queued {batch.queuedAt}
+                    Model: {item.payload?.model_id || "—"} · {formatTimestamp(item.created_at)}
                   </p>
                 </div>
-                <Badge tone={batch.status === "completed" ? "success" : "warning"}>
-                  {batch.status === "completed" ? "Completed" : "Queued"}
-                </Badge>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                  <p className="text-xs text-muted">Customers</p>
-                  <p className="text-sm font-semibold">{batch.customers.toLocaleString()}</p>
-                </div>
-                <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                  <p className="text-xs text-muted">High risk</p>
-                  <p className="text-sm font-semibold">{batch.highRisk.toLocaleString()}</p>
-                </div>
-                <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                  <p className="text-xs text-muted">Avg churn score</p>
-                  <p className="text-sm font-semibold">{batch.avgChurn.toFixed(2)}</p>
-                </div>
+                <p className="text-xs text-muted">{item.result?.count ?? "—"} customers</p>
               </div>
             </Link>
           ))}
