@@ -1,11 +1,12 @@
-"use client";
+﻿"use client";
 
-import MappingForm from "@/components/mapping-form";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default function OnboardingPage() {
-  return (
-    <div className="space-y-6">
-      <MappingForm />
-    </div>
-  );
+export default function OnboardingRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/upload-dataset");
+  }, [router]);
+  return null;
 }

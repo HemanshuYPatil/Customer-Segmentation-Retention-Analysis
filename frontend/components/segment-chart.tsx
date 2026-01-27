@@ -14,15 +14,19 @@ export default function SegmentChart({ data }: SegmentChartProps) {
       <div className="h-44">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data}>
-            <XAxis dataKey="segment" tick={{ fill: "#9FB0C7" }} />
+            <XAxis dataKey="segment" tick={{ fill: "rgb(var(--color-muted))" }} />
             <Tooltip
               contentStyle={{
-                background: "#121823",
-                border: "1px solid #1C2533",
-                color: "#E6EDF6"
+                background: "rgb(var(--color-panel))",
+                border: "1px solid rgb(var(--color-panel-border))",
+                color: "rgb(var(--color-text))"
               }}
             />
-            <Bar dataKey="customers" fill="#3BA3FF" radius={[6, 6, 0, 0]} />
+            <Bar
+              dataKey="customers"
+              fill="rgb(var(--color-accent))"
+              radius={[6, 6, 0, 0]}
+            />
           </BarChart>
         </ResponsiveContainer>
       </div>
