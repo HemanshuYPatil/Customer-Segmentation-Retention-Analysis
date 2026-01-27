@@ -1,0 +1,10 @@
+flowchart LR
+    A[Raw Transactions] --> B[Data Cleaning & Validation]
+    B --> C[RFM + Engagement Features]
+    C --> D[Segmentation: K-Means Personas]
+    C --> E[Churn Model: LogReg vs XGBoost]
+    C --> F[LTV Model: XGBoost Regressor]
+    D --> G[Strategic Actions]
+    E --> G
+    F --> G
+    G --> H[Retention/Resource Allocation Plan]
