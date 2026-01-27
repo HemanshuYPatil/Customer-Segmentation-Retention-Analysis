@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import argparse
+import yaml
 
 import mlflow
 import numpy as np
 import pandas as pd
 
 from config import get_config, get_paths
-from data_pipeline import clean_transactions, load_raw_transactions
+from data_pipeline import clean_transactions, load_raw_transactions, standardize_columns
 from features import build_rfm_features, build_time_split_features
 from modeling import (
     ModelArtifacts,
@@ -21,14 +23,31 @@ from modeling import (
 from reporting import build_segment_summary, recommend_actions, write_strategic_report
 
 
+def _load_mapping(mapping_path: Path) -> dict:
+    if mapping_path.suffix.lower() in {".yaml", ".yml"}:
+        with open(mapping_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    with open(mapping_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Train segmentation and churn models.")
+    parser.add_argument("--data-path", type=str, default=None)
+    parser.add_argument("--mapping-path", type=str, default=None)
+    args = parser.parse_args()
+
     paths = get_paths()
     config = get_config()
 
     paths.artifacts.mkdir(parents=True, exist_ok=True)
     paths.reports.mkdir(parents=True, exist_ok=True)
 
-    df_raw = load_raw_transactions(str(config.data_file))
+    data_file = Path(args.data_path) if args.data_path else config.data_file
+    df_raw = load_raw_transactions(str(data_file))
+    if args.mapping_path:
+        mapping = _load_mapping(Path(args.mapping_path))
+        df_raw = standardize_columns(df_raw, mapping)
     df = clean_transactions(df_raw)
 
     snapshot_date = df["InvoiceDate"].max() + pd.Timedelta(days=1)

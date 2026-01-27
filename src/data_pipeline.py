@@ -1,10 +1,48 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Dict, Optional
+
 import pandas as pd
 
 
 def load_raw_transactions(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, encoding="ISO-8859-1")
+    file_path = Path(path)
+    if file_path.suffix.lower() in {".xlsx", ".xls"}:
+        df = pd.read_excel(file_path)
+    else:
+        df = pd.read_csv(file_path, encoding="ISO-8859-1")
+    return df
+
+
+def standardize_columns(df: pd.DataFrame, mapping: Optional[Dict[str, str]] = None) -> pd.DataFrame:
+    if not mapping:
+        return df
+
+    required = {"customer_id", "order_id", "order_datetime", "product_id"}
+    missing = required - set(mapping.keys())
+    if missing:
+        raise ValueError(f"Missing required mappings: {sorted(missing)}")
+
+    df = df.copy()
+
+    def _col(key: str) -> str:
+        return mapping[key]
+
+    df["CustomerID"] = df[_col("customer_id")]
+    df["InvoiceNo"] = df[_col("order_id")]
+    df["InvoiceDate"] = df[_col("order_datetime")]
+    df["StockCode"] = df[_col("product_id")]
+
+    if "quantity" in mapping and "unit_price" in mapping:
+        df["Quantity"] = df[_col("quantity")]
+        df["UnitPrice"] = df[_col("unit_price")]
+    elif "order_total" in mapping:
+        df["Quantity"] = 1
+        df["UnitPrice"] = df[_col("order_total")]
+    else:
+        raise ValueError("Provide quantity+unit_price or order_total in mapping.")
+
     return df
 
 
