@@ -1,16 +1,13 @@
 # Customer Segmentation & Retention Analysis
 
-This project builds a production-minded customer segmentation and retention system using the Kaggle Online Retail dataset. It avoids tutorial-style shortcuts by forcing realistic data cleaning, explicit trade-offs, and business-focused evaluation.
+## 📌 Project Overview
 
-## What You Get
-- Data pipeline that cleans messy transactional data and documents key trade-offs.
-- RFM and engagement proxy features derived from raw transactions.
-- Hybrid modeling: segmentation (K-Means), churn prediction (Logistic Regression + XGBoost), and LTV regression (XGBoost).
-- MLflow experiment tracking for reproducibility.
-- FastAPI service to serve predictions and strategic actions.
-- Strategic recommendation report grounded in segment behavior.
+This project is an end-to-end Data Science solution designed to analyze customer behavior, segment customers based on their transactional history, and predict churn and Lifetime Value (LTV). It enables businesses to move from raw messy data to actionable strategic insights.
 
-## Flowchart
+The system includes a robust data processing pipeline, a Machine Learning backend (serving predictions via FastAPI), and two user interfaces: a strategic Streamlit dashboard for data scientists/analysts and a modern Next.js frontend for business users.
+
+## 🏗 Architecture Flow
+
 ```mermaid
 flowchart LR
     A[Raw Transactions] --> B[Data Cleaning & Validation]
@@ -24,98 +21,159 @@ flowchart LR
     G --> H[Retention/Resource Allocation Plan]
 ```
 
-## Trade-Offs (Documented)
-- **Missing CustomerID rows dropped**: avoids segment leakage from anonymous purchases.
-- **Canceled invoices removed**: keeps signals aligned with real revenue.
-- **No session features**: dataset lacks sessions, so engagement proxies (avg interpurchase days, purchase span) are used instead.
-- **Time-based split**: models train on past and validate on future behavior to reduce leakage.
+## 🚀 Key Features
 
-## Structure
-- `src/`: data pipeline, feature engineering, modeling, reporting.
-- `app/`: FastAPI app + Streamlit dashboard.
-- `artifacts/`: saved models, feature store, segment summaries.
-- `reports/`: strategic recommendation report.
-- `dataset/OnlineRetail.csv`: dataset (copied from `datasets/` if present).
+*   **Automated Data Pipeline:** Cleans and standardizes raw transactional data (handling missing values, cancellations, etc.).
+*   **Feature Engineering:** Calculates Recency, Frequency, Monetary (RFM) metrics and engagement proxies.
+*   **Customer Segmentation:** Uses K-Means clustering to identify distinct customer personas.
+*   **Predictive Modeling:**
+    *   **Churn Prediction:** Compares Logistic Regression and XGBoost to identify at-risk customers.
+    *   **LTV Estimation:** Predicts future customer value using XGBoost Regression.
+*   **Experiment Tracking:** Uses MLflow to track model performance and artifacts.
+*   **API Deployment:** Exposes model predictions via a high-performance FastAPI backend.
+*   **Dual Interfaces:**
+    *   **Streamlit Dashboard:** For model training, evaluation, and strategic reporting.
+    *   **Next.js App:** A polished UI for viewing customer predictions and segment insights.
 
-## Setup
+## 🛠 Tech Stack
+
+| Component | Technology | Description |
+| :--- | :--- | :--- |
+| **Language** | Python 3.10+ | Core logic and data processing. |
+| **Data Processing** | Pandas, NumPy | Data manipulation and vectorization. |
+| **Machine Learning** | Scikit-learn, XGBoost | Modeling (Clustering, Classification, Regression). |
+| **Tracking** | MLflow | Experiment tracking and model registry. |
+| **API Backend** | FastAPI, Uvicorn | REST API for serving predictions. |
+| **Frontend (App)** | Next.js, React, Tailwind | Modern web interface for end-users. |
+| **Dashboard** | Streamlit | Interactive tool for model management and analysis. |
+| **Containerization** | Docker (Optional) | For consistent deployment environments. |
+
+## 📂 Project Structure
+
+| Directory | Description |
+| :--- | :--- |
+| `app/` | Contains the backend API (`main.py`) and Streamlit dashboard (`dashboard.py`). |
+| `src/` | Core source code for data pipelines, feature engineering, and modeling. |
+| `frontend/` | Source code for the Next.js web application. |
+| `artifacts/` | Stores trained models (`.joblib`), feature stores, and summaries. |
+| `reports/` | Generated markdown reports and strategic summaries. |
+| `research/` | Research documents, flowcharts, and plans. |
+| `mlruns/` | MLflow local tracking data. |
+
+## ⚡ Installation & Setup
+
+### Prerequisites
+*   Python 3.10 or higher
+*   Node.js 18+ (for Frontend)
+*   Git
+
+### 1. Clone the Repository
 ```bash
+git clone <repository-url>
+cd Customer-Segmentation-Retention-Analysis
+```
+
+### 2. Backend Setup
+It is recommended to use a virtual environment.
+
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate (Windows)
+.\venv\Scripts\activate
+
+# Activate (Mac/Linux)
+source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Run Training Pipeline
+### 3. Frontend Setup (Next.js)
+
 ```bash
+cd frontend
+npm install
+# or
+yarn install
+```
+
+## 🖥 Usage
+
+### 1. Train the Models
+Run the training pipeline to process data, train models, and generate artifacts.
+
+```bash
+# Run from the root directory
 python src/train_pipeline.py
+
+# Optional: Specify custom data path
+# python src/train_pipeline.py --data-path path/to/data.xlsx
 ```
 
-Outputs:
-- `artifacts/feature_store.csv`
-- `artifacts/segment_summary.csv`
-- `artifacts/*.joblib`
-- `reports/strategic_report.md`
-- `mlruns/` (MLflow experiment tracking)
+### 2. Run the API (Backend)
+Start the FastAPI server to serve predictions.
 
-## Run API
 ```bash
-uvicorn app.main:app --reload
+# Run from the root directory
+uvicorn app.main:app --reload --port 8000
 ```
+*   API Docs: `http://localhost:8000/docs`
+*   Health Check: `http://localhost:8000/health`
 
-### Example Request
-```bash
-curl -X POST "http://127.0.0.1:8000/predict" ^
-  -H "Content-Type: application/json" ^
-  -d "{\"customer_id\": 17850}"
-```
+### 3. Run the Dashboard (Streamlit)
+For model insights and retraining.
 
-Or send features directly:
-```bash
-curl -X POST "http://127.0.0.1:8000/predict" ^
-  -H "Content-Type: application/json" ^
-  -d "{\"features\": {\"recency_days\": 12, \"frequency\": 5, \"monetary\": 520, \"avg_basket_value\": 104, \"unique_products\": 12, \"avg_interpurchase_days\": 30, \"purchase_span_days\": 120}}"
-```
-
-## Web Dashboard (Upload + Retrain)
 ```bash
 streamlit run app/dashboard.py
 ```
 
-### Column Mapping (JSON)
-When uploading a company dataset with different column names, provide a JSON mapping:
+### 4. Run the Frontend (Next.js)
+For the user-facing application.
+
+```bash
+cd frontend
+npm run dev
+```
+*   Access the app at `http://localhost:3000`
+
+## 🔌 API Documentation
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Returns the API status. |
+| `POST` | `/predict` | Predicts segment, churn prob, and LTV for a customer. |
+
+**Example Request (`/predict`):**
 ```json
 {
-  "customer_id": "ClientNumber",
-  "order_id": "TxnID",
-  "order_datetime": "PurchaseDate",
-  "product_id": "SKU",
-  "quantity": "Units",
-  "unit_price": "Price"
-}
-```
-If the dataset has only an order total, use:
-```json
-{
-  "customer_id": "ClientNumber",
-  "order_id": "TxnID",
-  "order_datetime": "PurchaseDate",
-  "product_id": "SKU",
-  "order_total": "OrderTotal"
+  "customer_id": 12345,
+  "features": {
+    "recency_days": 10,
+    "frequency": 5,
+    "monetary": 500.0,
+    "avg_basket_value": 100.0,
+    "unique_products": 20,
+    "avg_interpurchase_days": 30.0,
+    "purchase_span_days": 150.0
+  }
 }
 ```
 
-## Business Evaluation (Beyond F1)
-Churn model evaluation includes a **business cost function**:
-- False positives incur incentive cost.
-- False negatives lose future value.
-This cost is logged to MLflow as `business_cost`.
+## 📊 Model Details
 
-## Strategic Recommendation Report
-`reports/strategic_report.md` summarizes each segment’s value, churn risk, and recommended action:
-- Early access + loyalty perks for high-value, low-risk users.
-- Targeted retention incentives for valuable but at-risk users.
-- Low-touch win-back or deprioritize for low-value, high-risk users.
+### 1. Segmentation (Unsupervised)
+*   **Algorithm:** K-Means Clustering.
+*   **Features:** Recency, Frequency, Monetary (RFM), and engagement metrics.
+*   **Goal:** Group customers into behavioral personas (e.g., "Champions", "At Risk").
 
-## Drift Detection & Retraining Plan
-- **Monitoring cadence**: Weekly data checks, monthly model evaluation, quarterly retraining or sooner if drift triggers.
-- **Feature drift**: Compare rolling distributions of RFM features with Population Stability Index (PSI) and KS tests.
-- **Prediction drift**: Track churn probability calibration and LTV error against recent cohorts.
-- **Trigger thresholds**: PSI > 0.2 or AUC drop > 10% from baseline.
-- **Action**: Rebuild features, retrain models with most recent 12–18 months, and re-log to MLflow.
+### 2. Churn Prediction (Supervised)
+*   **Algorithm:** XGBoost (Selected as best performer over Logistic Regression).
+*   **Target:** `churn_label` (1 if no purchase in window, 0 otherwise).
+*   **Goal:** Identify customers likely to leave in the next 30-90 days.
+
+### 3. Lifetime Value (LTV)
+*   **Algorithm:** XGBoost Regressor.
+*   **Target:** `future_spend` (Total spend in the next horizon).
+*   **Goal:** Estimate the potential revenue from each customer.

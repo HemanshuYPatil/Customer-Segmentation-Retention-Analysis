@@ -6,6 +6,58 @@
   color-scheme: dark;
 }
 
+html[data-theme="ocean"] {
+  --color-background: 11 15 20;
+  --color-panel: 18 24 35;
+  --color-panel-border: 28 37 51;
+  --color-text: 230 237 246;
+  --color-muted: 159 176 199;
+  --color-accent: 59 163 255;
+  --color-accent-soft: 24 58 91;
+  --color-danger: 255 92 92;
+  --color-success: 74 222 128;
+  --color-warn: 245 158 11;
+}
+
+html[data-theme="slate"] {
+  --color-background: 13 16 23;
+  --color-panel: 24 29 40;
+  --color-panel-border: 38 46 63;
+  --color-text: 236 240 248;
+  --color-muted: 156 166 185;
+  --color-accent: 124 148 255;
+  --color-accent-soft: 33 48 88;
+  --color-danger: 255 104 104;
+  --color-success: 98 212 174;
+  --color-warn: 246 170 64;
+}
+
+html[data-theme="ember"] {
+  --color-background: 16 12 12;
+  --color-panel: 30 20 20;
+  --color-panel-border: 48 30 30;
+  --color-text: 242 236 234;
+  --color-muted: 187 170 168;
+  --color-accent: 255 126 74;
+  --color-accent-soft: 82 42 26;
+  --color-danger: 255 92 92;
+  --color-success: 110 216 158;
+  --color-warn: 245 158 11;
+}
+
+html[data-theme="emerald"] {
+  --color-background: 9 14 14;
+  --color-panel: 16 24 24;
+  --color-panel-border: 28 40 40;
+  --color-text: 228 240 238;
+  --color-muted: 145 176 170;
+  --color-accent: 45 212 191;
+  --color-accent-soft: 20 64 59;
+  --color-danger: 255 92 92;
+  --color-success: 74 222 128;
+  --color-warn: 245 158 11;
+}
+
 @font-face {
   font-family: "Bitcount Single";
   src: url("/fonts/BitcountSingle_Roman-Regular.ttf") format("truetype");
