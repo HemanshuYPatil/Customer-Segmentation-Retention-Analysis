@@ -37,8 +37,16 @@ export type Metrics = Record<string, number>;
 const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const { auth } = await import("@/lib/firebase");
+  const user = auth.currentUser;
+  const token = user ? await user.getIdToken() : null;
+  const tenantId = user?.uid;
   const res = await fetch(`${baseUrl}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(tenantId ? { "X-Tenant-Id": tenantId } : {})
+    },
     ...options
   });
   if (!res.ok) {
@@ -56,8 +64,59 @@ export const api = {
     }),
   metrics: () => request<Metrics>("/metrics"),
   segments: () => request<SegmentSummary[]>("/segments"),
-  retrain: () =>
-    request<{ status: string }>("/retrain", {
-      method: "POST"
-    })
+  models: () => request<Array<{ model_id: string; name: string; metrics: Metrics; artifact_prefix: string }>>("/models"),
+  predictions: () => request<Array<Record<string, unknown>>>("/predictions"),
+  retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string }) => {
+    const res = await fetch("/api/queue/train", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      throw new Error("Failed to queue training");
+    }
+    return res.json();
+  },
+  uploadDataset: async (
+    tenantId: string,
+    file: File,
+    mapping?: Record<string, string>
+  ): Promise<{ dataset_path: string; mapping_path?: string }> => {
+    const form = new FormData();
+    form.append("tenant_id", tenantId);
+    form.append("file", file);
+    if (mapping) {
+      form.append("mapping", JSON.stringify(mapping));
+    }
+    const res = await fetch(`${baseUrl}/upload`, {
+      method: "POST",
+      body: form
+    });
+    if (!res.ok) {
+      throw new Error("Upload failed");
+    }
+    return res.json();
+  },
+  queueSinglePrediction: async (payload: { tenant_id: string; model_id: string; customer_id?: number; features?: PredictRequest["features"] }) => {
+    const res = await fetch("/api/queue/predict-single", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      throw new Error("Failed to queue single prediction");
+    }
+    return res.json();
+  },
+  queueBatchPrediction: async (payload: { tenant_id: string; model_id: string }) => {
+    const res = await fetch("/api/queue/predict-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      throw new Error("Failed to queue batch prediction");
+    }
+    return res.json();
+  }
 };

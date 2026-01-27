@@ -1,92 +1,89 @@
-"use client";
+﻿"use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
+import { api } from "@/services/api";
 import { useToast } from "@/components/ui/toast";
+import { Select } from "@/components/ui/select";
+import { useState } from "react";
+import { useAuth } from "@/components/auth-provider";
 
 export default function ModelsPage() {
   const { push } = useToast();
-  const models = [
-    {
-      id: "mdl-2026-01-27-01",
-      name: "Jan 27, 2026 - Retail v3",
-      dataset: "retail_customers_v3.xlsx",
-      trainedAt: "Jan 27, 2026 14:32",
-      status: "active",
-      accuracy: 0.71,
-      f1: 0.62
-    },
-    {
-      id: "mdl-2026-01-12-02",
-      name: "Jan 12, 2026 - Ecom pilot",
-      dataset: "ecom_pilot_q4.csv",
-      trainedAt: "Jan 12, 2026 09:05",
-      status: "previous",
-      accuracy: 0.69,
-      f1: 0.59
-    },
-    {
-      id: "mdl-2025-12-20-01",
-      name: "Dec 20, 2025 - Wholesale",
-      dataset: "wholesale_master.xlsx",
-      trainedAt: "Dec 20, 2025 18:41",
-      status: "previous",
-      accuracy: 0.67,
-      f1: 0.55
+  const { user } = useAuth();
+  const [selectedModel, setSelectedModel] = useState("");
+
+  const metricsQuery = useQuery({
+    queryKey: ["metrics"],
+    queryFn: api.metrics,
+    retry: false
+  });
+
+  const modelsQuery = useQuery({
+    queryKey: ["models"],
+    queryFn: api.models,
+    retry: false
+  });
+
+  const handleRetrain = async () => {
+    push({ title: "Use the Onboarding page to upload and queue training.", tone: "info" });
+  };
+
+  const handleBatch = async () => {
+    if (!user) {
+      push({ title: "Login required.", tone: "error" });
+      return;
     }
-  ];
+    if (!selectedModel) {
+      push({ title: "Select a model.", tone: "error" });
+      return;
+    }
+    await api.queueBatchPrediction({ tenant_id: user.uid, model_id: selectedModel });
+    push({ title: "Batch prediction queued.", tone: "success" });
+  };
 
   return (
     <Card>
       <CardTitle>Model Management</CardTitle>
-      <CardDescription>
-        Review previous training runs and select a model for predictions.
-      </CardDescription>
+      <CardDescription>View trained models and latest metrics.</CardDescription>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="rounded-lg border border-panelBorder bg-background p-3">
+          <p className="text-xs text-muted">Accuracy</p>
+          <p className="text-2xl font-semibold">
+            {metricsQuery.data?.logreg_acc
+              ? `${(metricsQuery.data.logreg_acc * 100).toFixed(1)}%`
+              : "—"}
+          </p>
+        </div>
+        <div className="rounded-lg border border-panelBorder bg-background p-3">
+          <p className="text-xs text-muted">F1 Score</p>
+          <p className="text-2xl font-semibold">
+            {metricsQuery.data?.logreg_f1 ? metricsQuery.data.logreg_f1.toFixed(2) : "—"}
+          </p>
+        </div>
+      </div>
 
-      <div className="mt-4 grid gap-3">
-        {models.map((model) => (
-          <div key={model.id} className="rounded-xl border border-panelBorder bg-background p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold">{model.name}</p>
-                <p className="text-xs text-muted">{model.dataset}</p>
-              </div>
-              <Badge tone={model.status === "active" ? "success" : "neutral"}>
-                {model.status === "active" ? "Latest model" : "Previous model"}
-              </Badge>
-            </div>
+      <div className="mt-5 rounded-xl border border-panelBorder bg-panel p-4">
+        <p className="text-sm font-semibold">Trained models</p>
+        <p className="mt-1 text-xs text-muted">Select a model to use for predictions.</p>
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+          <Select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+            <option value="">Select model</option>
+            {(modelsQuery.data ?? []).map((model) => (
+              <option key={model.model_id} value={model.model_id}>
+                {model.name}
+              </option>
+            ))}
+          </Select>
+          <Button onClick={handleBatch}>Queue batch prediction</Button>
+        </div>
+      </div>
 
-            <div className="mt-3 grid gap-3 md:grid-cols-3">
-              <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                <p className="text-xs text-muted">Trained</p>
-                <p className="text-sm font-semibold">{model.trainedAt}</p>
-              </div>
-              <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                <p className="text-xs text-muted">Accuracy</p>
-                <p className="text-sm font-semibold">{(model.accuracy * 100).toFixed(1)}%</p>
-              </div>
-              <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                <p className="text-xs text-muted">F1 Score</p>
-                <p className="text-sm font-semibold">{model.f1.toFixed(2)}</p>
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <Button
-                onClick={() => push({ title: "Model selected for predictions.", tone: "success" })}
-              >
-                Use for predictions
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => push({ title: "Retraining started.", tone: "info" })}
-              >
-                Retrain with this data
-              </Button>
-            </div>
-          </div>
-        ))}
+      <div className="mt-4">
+        <Button onClick={handleRetrain} variant="secondary">
+          Go to Onboarding to Train
+        </Button>
       </div>
     </Card>
   );

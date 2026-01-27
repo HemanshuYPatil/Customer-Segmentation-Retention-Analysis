@@ -29,6 +29,9 @@ datasets/
 *.xlsx
 *.xls
 
+# Firebase service account
+csr-a90c3-firebase-adminsdk-fbsvc-6ea13f61bd.json
+
 # OS
 .DS_Store
 Thumbs.db
@@ -45,4 +48,3 @@ frontend/tsconfig.tsbuildinfo
 frontend/npm-debug.log*
 frontend/yarn.lock
 frontend/pnpm-lock.yaml
-
