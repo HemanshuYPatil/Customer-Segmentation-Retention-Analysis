@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import Sidebar from "@/components/sidebar";
 import Topbar from "@/components/topbar";
+import AuthGuard from "@/components/auth-guard";
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
@@ -11,7 +12,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           <div className="flex-1 overflow-y-auto">
             <div className="p-4">
               <Topbar />
-              <div className="mt-4 space-y-4">{children}</div>
+              <AuthGuard>
+                <div className="mt-4 space-y-4">{children}</div>
+              </AuthGuard>
             </div>
           </div>
         </div>
