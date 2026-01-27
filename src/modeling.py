@@ -69,6 +69,18 @@ def train_segmentation(features: pd.DataFrame, random_state: int, k_range: Tuple
     return scaler, kmeans, features, scores
 
 
+def _find_best_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> Tuple[float, float]:
+    best_thresh = 0.5
+    best_acc = -1.0
+    for thresh in np.linspace(0.05, 0.95, 91):
+        preds = (y_prob >= thresh).astype(int)
+        acc = accuracy_score(y_true, preds)
+        if acc > best_acc:
+            best_acc = acc
+            best_thresh = float(thresh)
+    return best_thresh, float(best_acc)
+
+
 def train_churn_models(
     features: pd.DataFrame, random_state: int
 ) -> Tuple[LogisticRegression, object, Dict[str, float]]:
@@ -85,34 +97,60 @@ def train_churn_models(
     ]
     y = features["churn_label"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_temp, X_test, y_temp, y_test = train_test_split(
         X, y, test_size=0.2, random_state=random_state, stratify=y
+    )
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_temp, y_temp, test_size=0.25, random_state=random_state, stratify=y_temp
     )
 
     logreg = LogisticRegression(max_iter=1000)
     logreg.fit(X_train, y_train)
-    logreg_pred = logreg.predict_proba(X_test)[:, 1]
-    logreg_f1 = f1_score(y_test, (logreg_pred > 0.5).astype(int))
-    logreg_auc = roc_auc_score(y_test, logreg_pred)
-    logreg_acc = accuracy_score(y_test, (logreg_pred > 0.5).astype(int))
+    logreg_val_prob = logreg.predict_proba(X_val)[:, 1]
+    logreg_thresh, logreg_val_acc = _find_best_threshold(y_val.values, logreg_val_prob)
+    logreg_test_prob = logreg.predict_proba(X_test)[:, 1]
+    logreg_test_pred = (logreg_test_prob >= logreg_thresh).astype(int)
+    logreg_f1 = f1_score(y_test, logreg_test_pred)
+    logreg_auc = roc_auc_score(y_test, logreg_test_prob)
+    logreg_acc = accuracy_score(y_test, logreg_test_pred)
 
     if XGBClassifier is None:
         raise ImportError("xgboost is required for XGBClassifier")
 
-    xgb = XGBClassifier(
-        n_estimators=300,
-        max_depth=5,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=random_state,
-        eval_metric="logloss",
-    )
-    xgb.fit(X_train, y_train)
-    xgb_pred = xgb.predict_proba(X_test)[:, 1]
-    xgb_f1 = f1_score(y_test, (xgb_pred > 0.5).astype(int))
-    xgb_auc = roc_auc_score(y_test, xgb_pred)
-    xgb_acc = accuracy_score(y_test, (xgb_pred > 0.5).astype(int))
+    candidate_params = [
+        {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.05},
+        {"n_estimators": 500, "max_depth": 4, "learning_rate": 0.03},
+        {"n_estimators": 400, "max_depth": 5, "learning_rate": 0.05},
+        {"n_estimators": 600, "max_depth": 6, "learning_rate": 0.03},
+    ]
+
+    best_xgb = None
+    best_xgb_thresh = 0.5
+    best_xgb_val_acc = -1.0
+    for params in candidate_params:
+        model = XGBClassifier(
+            n_estimators=params["n_estimators"],
+            max_depth=params["max_depth"],
+            learning_rate=params["learning_rate"],
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=random_state,
+            eval_metric="logloss",
+        )
+        model.fit(X_train, y_train)
+        val_prob = model.predict_proba(X_val)[:, 1]
+        thresh, val_acc = _find_best_threshold(y_val.values, val_prob)
+        if val_acc > best_xgb_val_acc:
+            best_xgb = model
+            best_xgb_thresh = thresh
+            best_xgb_val_acc = val_acc
+
+    xgb = best_xgb
+    xgb_test_prob = xgb.predict_proba(X_test)[:, 1]
+    xgb_test_pred = (xgb_test_prob >= best_xgb_thresh).astype(int)
+    xgb_f1 = f1_score(y_test, xgb_test_pred)
+    xgb_auc = roc_auc_score(y_test, xgb_test_prob)
+    xgb_acc = accuracy_score(y_test, xgb_test_pred)
 
     baseline_pred = np.zeros_like(y_test)
     baseline_acc = accuracy_score(y_test, baseline_pred)
@@ -124,9 +162,13 @@ def train_churn_models(
         "logreg_f1": logreg_f1,
         "logreg_auc": logreg_auc,
         "logreg_acc": logreg_acc,
+        "logreg_best_threshold": float(logreg_thresh),
+        "logreg_val_acc": float(logreg_val_acc),
         "xgb_f1": xgb_f1,
         "xgb_auc": xgb_auc,
         "xgb_acc": xgb_acc,
+        "xgb_best_threshold": float(best_xgb_thresh),
+        "xgb_val_acc": float(best_xgb_val_acc),
     }
 
     return logreg, xgb, metrics

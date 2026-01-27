@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.pkl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+.env
+.venv/
+venv/
+env/
+
+# ML artifacts
+mlruns/
+artifacts/
+*.joblib
+*.onnx
+*.h5
+*.pt
+*.pth
+
+# Data
+dataset/
+datasets/
+*.csv
+*.xlsx
+*.xls
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env
+frontend/.env.production
+frontend/.env.development
+frontend/tsconfig.tsbuildinfo
+frontend/npm-debug.log*
+frontend/yarn.lock
+frontend/pnpm-lock.yaml
+
