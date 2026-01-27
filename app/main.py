@@ -10,6 +10,7 @@ import os
 import joblib
 import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,8 +22,11 @@ from firestore_client import (
     list_predictions,
     get_model,
     write_prediction,
+    get_prediction,
+    set_default_model,
+    get_default_model,
 )
-from storage import get_b2_client, download_file
+from storage import get_b2_client, download_file, presign_download_url
 from pydantic import BaseModel, Field
 
 ARTIFACTS = ROOT / "artifacts"
@@ -190,11 +194,88 @@ def models(x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
     return list_models(x_tenant_id)
 
 
+@app.get("/models/default")
+def get_default(x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    return {"model_id": get_default_model(x_tenant_id)}
+
+
+@app.post("/models/default")
+def set_default(x_tenant_id: Optional[str] = Header(None), body: dict | None = None) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    model_id = body.get("model_id") if body else None
+    if not model_id:
+        raise HTTPException(status_code=400, detail="Missing model_id")
+    set_default_model(x_tenant_id, model_id)
+    return {"status": "ok"}
+
+
 @app.get("/predictions")
 def predictions(x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
     if not x_tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant id")
     return list_predictions(x_tenant_id)
+
+
+@app.get("/predictions/{prediction_id}")
+def prediction_detail(prediction_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    item = get_prediction(x_tenant_id, prediction_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    return item
+
+
+@app.get("/predictions/{prediction_id}/download")
+def prediction_download(prediction_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    item = get_prediction(x_tenant_id, prediction_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    url = item.get("batch_file_url")
+    if not url:
+        raise HTTPException(status_code=404, detail="No file available")
+    if not url.startswith("b2://"):
+        return {"url": url}
+    _, bucket_and_prefix = url.split("b2://", 1)
+    bucket, key = bucket_and_prefix.split("/", 1)
+    client = get_b2_client()
+    if client is None:
+        raise HTTPException(status_code=500, detail="B2 client not configured. Set B2_* env vars in .env.")
+    try:
+        presigned = presign_download_url(client, bucket, key, expires_in=3600)
+        return {"url": presigned}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"B2 download failed: {exc}")
+
+
+@app.get("/predictions/{prediction_id}/csv")
+def prediction_csv(prediction_id: str, x_tenant_id: Optional[str] = Header(None)) -> FileResponse:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    item = get_prediction(x_tenant_id, prediction_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    url = item.get("batch_file_url")
+    if not url:
+        raise HTTPException(status_code=404, detail="No file available")
+    if url.startswith("b2://"):
+        _, bucket_and_prefix = url.split("b2://", 1)
+        bucket, key = bucket_and_prefix.split("/", 1)
+        client = get_b2_client()
+        if client is None:
+            raise HTTPException(status_code=500, detail="B2 client not configured. Set B2_* env vars in .env.")
+        temp_path = ROOT / "artifacts_cache" / x_tenant_id / "downloads" / f"{prediction_id}.csv"
+        download_file(client, bucket, key, temp_path)
+        return FileResponse(temp_path, media_type="text/csv", filename=f"{prediction_id}.csv")
+    local_path = Path(url)
+    if local_path.exists():
+        return FileResponse(local_path, media_type="text/csv", filename=local_path.name)
+    raise HTTPException(status_code=404, detail="File not found")
 
 
 @app.post("/predict", response_model=PredictResponse)

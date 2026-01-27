@@ -64,8 +64,28 @@ export const api = {
     }),
   metrics: () => request<Metrics>("/metrics"),
   segments: () => request<SegmentSummary[]>("/segments"),
-  models: () => request<Array<{ model_id: string; name: string; metrics: Metrics; artifact_prefix: string }>>("/models"),
+  models: () =>
+    request<Array<{ model_id: string; name: string; metrics: Metrics; artifact_prefix: string }>>("/models"),
+  defaultModel: () => request<{ model_id: string | null }>("/models/default"),
+  setDefaultModel: (modelId: string) =>
+    request<{ status: string }>("/models/default", {
+      method: "POST",
+      body: JSON.stringify({ model_id: modelId })
+    }),
   predictions: () => request<Array<Record<string, unknown>>>("/predictions"),
+  predictionDetail: (predictionId: string) =>
+    request<Record<string, unknown>>(`/predictions/${predictionId}`),
+  predictionDownload: (predictionId: string) =>
+    request<{ url: string }>(`/predictions/${predictionId}/download`),
+  predictionCsv: async (predictionId: string) => {
+    const { auth } = await import("@/lib/firebase");
+    return fetch(`${baseUrl}/predictions/${predictionId}/csv`, {
+      headers: {
+        "Content-Type": "text/csv",
+        ...(auth.currentUser?.uid ? { "X-Tenant-Id": auth.currentUser.uid } : {})
+      }
+    });
+  },
   retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string }) => {
     const res = await fetch("/api/queue/train", {
       method: "POST",
