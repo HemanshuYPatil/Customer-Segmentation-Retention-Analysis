@@ -42,3 +42,11 @@ def upload_files(client, bucket: str, local_paths: Iterable[Path], prefix: str) 
 def download_file(client, bucket: str, key: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     client.download_file(bucket, key, str(dest))
+
+
+def presign_download_url(client, bucket: str, key: str, expires_in: int = 3600) -> str:
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": key},
+        ExpiresIn=expires_in,
+    )

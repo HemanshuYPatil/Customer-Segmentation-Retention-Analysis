@@ -25,7 +25,7 @@ import { Select } from "@/components/ui/select";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/onboarding", label: "Upload Dataset", icon: UploadCloud },
+  { href: "/onboarding", label: "Train Model", icon: UploadCloud },
   { href: "/predictions", label: "Prediction Console", icon: Users },
   { href: "/models", label: "Model Management", icon: Settings }
 ];

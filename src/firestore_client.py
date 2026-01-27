@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from typing import Any, Dict, Optional
 
 import firebase_admin
@@ -8,6 +11,10 @@ from firebase_admin import credentials, firestore
 
 
 _APP = None
+
+# Load .env from repo root if present (avoids re-setting env vars)
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env", override=False)
 
 
 def get_firestore():
@@ -124,6 +131,37 @@ def list_predictions(tenant_id: str, limit: int = 100) -> list[dict]:
         .stream()
     )
     return [doc.to_dict() for doc in docs]
+
+
+def get_prediction(tenant_id: str, prediction_id: str) -> Optional[dict]:
+    db = get_firestore()
+    if db is None:
+        return None
+    doc = (
+        db.collection("tenants")
+        .document(tenant_id)
+        .collection("predictions")
+        .document(prediction_id)
+        .get()
+    )
+    return doc.to_dict() if doc.exists else None
+
+
+def set_default_model(tenant_id: str, model_id: str) -> None:
+    db = get_firestore()
+    if db is None:
+        return
+    db.collection("tenants").document(tenant_id).set({"default_model": model_id}, merge=True)
+
+
+def get_default_model(tenant_id: str) -> Optional[str]:
+    db = get_firestore()
+    if db is None:
+        return None
+    doc = db.collection("tenants").document(tenant_id).get()
+    if not doc.exists:
+        return None
+    return doc.to_dict().get("default_model")
 
 
 def get_latest_metrics(tenant_id: str) -> Dict[str, float]:
