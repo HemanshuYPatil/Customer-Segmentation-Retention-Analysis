@@ -1,193 +1,167 @@
-﻿"use client";
+"use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-
-const modelOptions = [
-  { id: "mdl-2026-01-27-01", label: "Jan 27, 2026 - Retail v3 (Latest)" },
-  { id: "mdl-2026-01-12-02", label: "Jan 12, 2026 - Ecom pilot" },
-  { id: "mdl-2025-12-20-01", label: "Dec 20, 2025 - Wholesale" }
-];
-
-const batchRuns = [
-  {
-    id: "batch-2026-01-27-01",
-    name: "Retail v3 - Full dataset",
-    model: "Retail v3",
-    queuedAt: "Jan 27, 2026 15:05",
-    status: "completed",
-    customers: 12480,
-    highRisk: 368,
-    avgChurn: 0.31
-  },
-  {
-    id: "batch-2026-01-20-02",
-    name: "Ecom pilot - January refresh",
-    model: "Ecom pilot",
-    queuedAt: "Jan 20, 2026 10:12",
-    status: "completed",
-    customers: 8620,
-    highRisk: 290,
-    avgChurn: 0.28
-  },
-  {
-    id: "batch-2026-01-14-01",
-    name: "Wholesale - Q1 backlog",
-    model: "Wholesale",
-    queuedAt: "Jan 14, 2026 08:44",
-    status: "queued",
-    customers: 6430,
-    highRisk: 210,
-    avgChurn: 0.34
-  }
-];
+import { api } from "@/services/api";
+import PredictionTable from "@/components/prediction-table";
+import { useAuth } from "@/components/auth-provider";
+import { useToast } from "@/components/ui/toast";
 
 export default function PredictionsPage() {
   const [query, setQuery] = useState("");
-  const [method, setMethod] = useState<"single" | "batch">("single");
-  const [selectedModel, setSelectedModel] = useState<string>(modelOptions[0].id);
+  const [selectedModel, setSelectedModel] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const { user } = useAuth();
+  const { push } = useToast();
 
-  const filteredBatches = useMemo(() => {
-    if (!query) return batchRuns;
-    return batchRuns.filter((batch) =>
-      batch.name.toLowerCase().includes(query.toLowerCase())
-    );
-  }, [query]);
+  const modelsQuery = useQuery({
+    queryKey: ["models"],
+    queryFn: api.models
+  });
+
+  const predictionsQuery = useQuery({
+    queryKey: ["predictions"],
+    queryFn: api.predictions
+  });
+
+  const rows = useMemo(() => {
+    const items = predictionsQuery.data ?? [];
+    const formatted = items.flatMap((item: any) => {
+      const result = item.result as {
+        rows?: any[];
+        customer_id?: number;
+        churn_probability?: number;
+        ltv_estimate?: number;
+        segment?: number;
+      };
+      if (result?.rows) {
+        return result.rows.map((row) => ({
+          customerId: String(row.CustomerID ?? row.customer_id),
+          churnProbability: Number(row.churn_probability ?? 0),
+          ltv: Number(row.ltv_estimate ?? 0),
+          segment: String(row.segment ?? "")
+        }));
+      }
+      if (result?.customer_id) {
+        return [
+          {
+            customerId: String(result.customer_id),
+            churnProbability: Number(result.churn_probability ?? 0),
+            ltv: Number(result.ltv_estimate ?? 0),
+            segment: String(result.segment ?? "")
+          }
+        ];
+      }
+      return [];
+    });
+    if (!query) return formatted;
+    return formatted.filter((row) => row.customerId.toLowerCase().includes(query.toLowerCase()));
+  }, [predictionsQuery.data, query]);
+
+  const triggerSingle = async () => {
+    if (!user) {
+      push({ title: "Login required.", tone: "error" });
+      return;
+    }
+    if (!selectedModel) {
+      push({ title: "Select a model.", tone: "error" });
+      return;
+    }
+    const id = Number(customerId);
+    if (!id) {
+      push({ title: "Enter a valid customer ID.", tone: "error" });
+      return;
+    }
+    await api.queueSinglePrediction({
+      tenant_id: user.uid,
+      model_id: selectedModel,
+      customer_id: id
+    });
+    push({ title: "Single prediction queued.", tone: "success" });
+  };
+
+  const triggerBatch = async () => {
+    if (!user) {
+      push({ title: "Login required.", tone: "error" });
+      return;
+    }
+    if (!selectedModel) {
+      push({ title: "Select a model.", tone: "error" });
+      return;
+    }
+    await api.queueBatchPrediction({ tenant_id: user.uid, model_id: selectedModel });
+    push({ title: "Batch prediction queued.", tone: "success" });
+  };
 
   return (
     <Card>
       <CardTitle>Prediction Console</CardTitle>
-      <CardDescription>
-        Choose a prediction method, select a trained model, and run predictions.
-      </CardDescription>
+      <CardDescription>Queue single or batch predictions using a trained model.</CardDescription>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-panelBorder bg-background p-4">
-          <p className="text-sm font-semibold">Prediction method</p>
-          <p className="mt-1 text-xs text-muted">
-            Single for one customer ID, batch for all customers in your dataset.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              variant={method === "single" ? "primary" : "secondary"}
-              onClick={() => setMethod("single")}
-            >
-              Single prediction
-            </Button>
-            <Button
-              variant={method === "batch" ? "primary" : "secondary"}
-              onClick={() => setMethod("batch")}
-            >
-              Batch processing
-            </Button>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-panelBorder bg-background p-4">
           <p className="text-sm font-semibold">Select model</p>
-          <p className="mt-1 text-xs text-muted">
-            Choose a previous training run to use for predictions.
-          </p>
+          <p className="mt-1 text-xs text-muted">Choose a trained model to run predictions.</p>
           <div className="mt-3">
             <Select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-              {modelOptions.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.label}
+              <option value="">Select model</option>
+              {(modelsQuery.data ?? []).map((model) => (
+                <option key={model.model_id} value={model.model_id}>
+                  {model.name}
                 </option>
               ))}
             </Select>
           </div>
         </div>
 
-        {method === "single" ? (
-          <div className="rounded-xl border border-panelBorder bg-panel p-4 lg:col-span-2">
-            <p className="text-sm font-semibold">Single prediction</p>
-            <p className="mt-1 text-xs text-muted">
-              Enter a customer ID to run a one-off prediction with the selected model.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <Input
-                placeholder="Customer ID"
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-              />
-              <Button disabled={!customerId}>Run prediction</Button>
-            </div>
+        <div className="rounded-xl border border-panelBorder bg-panel p-4">
+          <p className="text-sm font-semibold">Single prediction</p>
+          <p className="mt-1 text-xs text-muted">Enter a customer ID to queue a prediction.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Input
+              placeholder="Customer ID"
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+            />
+            <Button onClick={triggerSingle} disabled={!customerId}>
+              Queue single
+            </Button>
           </div>
-        ) : (
-          <div className="rounded-xl border border-panelBorder bg-panel p-4 lg:col-span-2">
-            <p className="text-sm font-semibold">Batch processing</p>
-            <p className="mt-1 text-xs text-muted">
-              Queue predictions for all customers using the selected model.
-            </p>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs text-muted">Dataset size</p>
-                <p className="text-sm font-semibold">12,480 customers</p>
-              </div>
-              <Button>Queue batch prediction</Button>
-            </div>
+        </div>
+
+        <div className="rounded-xl border border-panelBorder bg-panel p-4 lg:col-span-2">
+          <p className="text-sm font-semibold">Batch prediction</p>
+          <p className="mt-1 text-xs text-muted">
+            Queue predictions for all customers in the model dataset.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <Button onClick={triggerBatch}>Queue batch prediction</Button>
           </div>
-        )}
+        </div>
       </div>
 
       <div className="mt-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold">Latest batches</p>
-            <p className="text-xs text-muted">Select a batch to view full prediction details.</p>
+            <p className="text-sm font-semibold">Prediction results</p>
+            <p className="text-xs text-muted">Latest predictions stored for this tenant.</p>
           </div>
           <Input
-            placeholder="Search batch name"
+            placeholder="Search customer ID"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="max-w-xs"
           />
         </div>
 
-        <div className="mt-3 grid gap-3">
-          {filteredBatches.map((batch) => (
-            <Link
-              key={batch.id}
-              href={`/predictions/batch/${batch.id}`}
-              className="rounded-xl border border-panelBorder bg-background p-4 transition hover:border-accent/60"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold">{batch.name}</p>
-                  <p className="text-xs text-muted">
-                    Model: {batch.model} · Queued {batch.queuedAt}
-                  </p>
-                </div>
-                <Badge tone={batch.status === "completed" ? "success" : "warning"}>
-                  {batch.status === "completed" ? "Completed" : "Queued"}
-                </Badge>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                  <p className="text-xs text-muted">Customers</p>
-                  <p className="text-sm font-semibold">{batch.customers.toLocaleString()}</p>
-                </div>
-                <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                  <p className="text-xs text-muted">High risk</p>
-                  <p className="text-sm font-semibold">{batch.highRisk.toLocaleString()}</p>
-                </div>
-                <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                  <p className="text-xs text-muted">Avg churn score</p>
-                  <p className="text-sm font-semibold">{batch.avgChurn.toFixed(2)}</p>
-                </div>
-              </div>
-            </Link>
-          ))}
+        <div className="mt-3">
+          <PredictionTable rows={rows} />
         </div>
       </div>
     </Card>
   );
 }
-

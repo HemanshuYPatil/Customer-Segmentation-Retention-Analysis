@@ -90,6 +90,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Firestore (metadata storage)
+Set this environment variable for the backend:
+```bash
+FIREBASE_SERVICE_ACCOUNT_PATH=C:\\path\\to\\service-account.json
+```
+
 ### 3. Frontend Setup (Next.js)
 
 ```bash
@@ -101,12 +107,26 @@ yarn install
 
 ## 🖥 Usage
 
+### Backblaze B2 (Model Storage)
+Set these environment variables before training if you want artifacts uploaded to B2:
+```bash
+B2_BUCKET=CSR-Bucket
+B2_ENDPOINT=s3.us-east-005.backblazeb2.com
+B2_REGION=us-east-005
+B2_KEY_ID=your_key_id
+B2_APP_KEY=your_app_key
+```
+Artifacts will be uploaded to:
+```
+tenants/{tenant_id}/models/
+```
+
 ### 1. Train the Models
 Run the training pipeline to process data, train models, and generate artifacts.
 
 ```bash
 # Run from the root directory
-python src/train_pipeline.py
+python src/train_pipeline.py --tenant-id tenant_123
 
 # Optional: Specify custom data path
 # python src/train_pipeline.py --data-path path/to/data.xlsx

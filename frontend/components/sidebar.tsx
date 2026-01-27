@@ -12,18 +12,20 @@ import {
   Shield,
   Bell,
   Database,
-  Plug,
   User
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { signOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
+import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/upload-dataset", label: "Upload Dataset", icon: UploadCloud },
+  { href: "/onboarding", label: "Upload Dataset", icon: UploadCloud },
   { href: "/predictions", label: "Prediction Console", icon: Users },
   { href: "/models", label: "Model Management", icon: Settings }
 ];
@@ -33,10 +35,18 @@ export default function Sidebar() {
   const [open, setOpen] = useState(false);
   const [activeModal, setActiveModal] = useState<"account" | "settings" | null>(null);
   const [settingsTab, setSettingsTab] = useState<
-    "appearance" | "notifications" | "security" | "data" | "integrations"
+    "appearance" | "notifications" | "security" | "data"
   >("appearance");
   const [theme, setTheme] = useState("ocean");
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const { user } = useAuth();
+  const initials =
+    (user?.displayName || user?.email || "")
+      .split(/[\s@.]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("") || "??";
   const themeOptions = [
     { value: "ocean", label: "Ocean Blue" },
     { value: "slate", label: "Slate Violet" },
@@ -102,12 +112,14 @@ export default function Sidebar() {
         >
           <div className="h-10 w-10 overflow-hidden rounded-full border border-panelBorder">
             <div className="flex h-full w-full items-center justify-center bg-accentSoft text-sm font-semibold text-text">
-              AJ
+              {initials}
             </div>
           </div>
           <div className="flex-1">
-            <p className="text-sm font-semibold">Aisha Johnson</p>
-            <p className="text-xs text-muted">@aisha.j</p>
+            <p className="text-sm font-semibold">
+              {user?.displayName || user?.email || ""}
+            </p>
+            <p className="text-xs text-muted">{user?.email || ""}</p>
           </div>
           <ChevronRight size={16} className={cn("text-muted transition", open && "translate-x-0.5")} />
         </button>
@@ -138,13 +150,16 @@ export default function Sidebar() {
           >
             Settings
           </button>
-          <button className="w-full rounded-md px-3 py-2 text-left text-danger hover:bg-panelBorder/50">
+          <button
+            onClick={() => signOut(auth)}
+            className="w-full rounded-md px-3 py-2 text-left text-danger hover:bg-panelBorder/50"
+          >
             Log out
           </button>
         </div>
       </div>
       {activeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
           <div className="w-full max-w-4xl rounded-2xl border border-panelBorder bg-panel">
             <div className="flex items-center justify-between border-b border-panelBorder px-6 py-4">
               <div>
@@ -159,7 +174,7 @@ export default function Sidebar() {
             </div>
 
             {activeModal === "settings" ? (
-              <div className="grid gap-4 p-6 md:grid-cols-[220px_1fr]">
+              <div className="grid max-h-[78vh] gap-4 overflow-y-auto p-6 md:grid-cols-[220px_1fr]">
                 <div className="space-y-2 rounded-xl border border-panelBorder bg-background p-3">
                   <button
                     className={cn(
@@ -209,18 +224,6 @@ export default function Sidebar() {
                     <Database size={16} />
                     Data & Storage
                   </button>
-                  <button
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition",
-                      settingsTab === "integrations"
-                        ? "bg-accentSoft text-text"
-                        : "text-muted hover:bg-panelBorder/50 hover:text-text"
-                    )}
-                    onClick={() => setSettingsTab("integrations")}
-                  >
-                    <Plug size={16} />
-                    Integrations
-                  </button>
                 </div>
                 <div className="rounded-xl border border-panelBorder bg-background p-4">
                   {settingsTab === "appearance" && (
@@ -267,15 +270,10 @@ export default function Sidebar() {
                           Control when you receive model and churn alerts.
                         </p>
                       </div>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">Churn spikes</p>
-                          <p className="mt-2 text-sm font-semibold">Enabled</p>
-                        </div>
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">Training completion</p>
-                          <p className="mt-2 text-sm font-semibold">Enabled</p>
-                        </div>
+                      <div className="rounded-lg border border-panelBorder bg-panel p-3">
+                        <p className="text-xs text-muted">
+                          Configure notification rules in your admin console.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -288,15 +286,10 @@ export default function Sidebar() {
                           Manage access, sessions, and audit controls.
                         </p>
                       </div>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">MFA</p>
-                          <p className="mt-2 text-sm font-semibold">Required</p>
-                        </div>
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">Session timeout</p>
-                          <p className="mt-2 text-sm font-semibold">8 hours</p>
-                        </div>
+                      <div className="rounded-lg border border-panelBorder bg-panel p-3">
+                        <p className="text-xs text-muted">
+                          Security policies are managed by your identity provider.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -309,53 +302,24 @@ export default function Sidebar() {
                           Control retention windows and storage regions.
                         </p>
                       </div>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">Retention</p>
-                          <p className="mt-2 text-sm font-semibold">18 months</p>
-                        </div>
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">Storage region</p>
-                          <p className="mt-2 text-sm font-semibold">US East</p>
-                        </div>
+                      <div className="rounded-lg border border-panelBorder bg-panel p-3">
+                        <p className="text-xs text-muted">
+                          Storage settings are configured per tenant in the admin console.
+                        </p>
                       </div>
                     </div>
                   )}
 
-                  {settingsTab === "integrations" && (
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-sm font-semibold">Integrations</p>
-                        <p className="text-xs text-muted">
-                          Manage active connections for data ingestion.
-                        </p>
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">CRM</p>
-                          <p className="mt-2 text-sm font-semibold">Salesforce</p>
-                        </div>
-                        <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                          <p className="text-xs text-muted">Data warehouse</p>
-                          <p className="mt-2 text-sm font-semibold">Snowflake</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 p-6 md:grid-cols-[220px_1fr]">
+              <div className="grid max-h-[78vh] gap-4 overflow-y-auto p-6 md:grid-cols-[220px_1fr]">
                 <div className="rounded-xl border border-panelBorder bg-background p-4 text-center">
                   <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-accentSoft text-lg font-semibold">
-                    AJ
+                    {initials}
                   </div>
-                  <p className="text-sm font-semibold">Aisha Johnson</p>
-                  <p className="text-xs text-muted">@aisha.j</p>
-                  <div className="mt-3 rounded-lg border border-panelBorder bg-panel p-3 text-left">
-                    <p className="text-xs text-muted">Plan</p>
-                    <p className="text-sm font-semibold">Enterprise Growth</p>
-                  </div>
+                  <p className="text-sm font-semibold">{user?.displayName || user?.email || ""}</p>
+                  <p className="text-xs text-muted">{user?.email || ""}</p>
                 </div>
                 <div className="rounded-xl border border-panelBorder bg-background p-4">
                   <div className="flex items-center gap-2">
@@ -365,25 +329,8 @@ export default function Sidebar() {
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     <div className="rounded-lg border border-panelBorder bg-panel p-3">
                       <p className="text-xs text-muted">Email</p>
-                      <p className="text-sm font-semibold">aisha.j@enterprise.com</p>
+                      <p className="text-sm font-semibold">{user?.email || ""}</p>
                     </div>
-                    <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                      <p className="text-xs text-muted">Role</p>
-                      <p className="text-sm font-semibold">Admin</p>
-                    </div>
-                    <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                      <p className="text-xs text-muted">Team</p>
-                      <p className="text-sm font-semibold">Retention Ops</p>
-                    </div>
-                    <div className="rounded-lg border border-panelBorder bg-panel p-3">
-                      <p className="text-xs text-muted">Last login</p>
-                      <p className="text-sm font-semibold">Today, 09:22 AM</p>
-                    </div>
-                  </div>
-                  <div className="mt-4 rounded-lg border border-panelBorder bg-panel p-3">
-                    <p className="text-xs text-muted">API access</p>
-                    <p className="text-sm font-semibold">Enabled</p>
-                    <p className="mt-1 text-xs text-muted">Key: sk-live-****-9f2a</p>
                   </div>
                 </div>
               </div>

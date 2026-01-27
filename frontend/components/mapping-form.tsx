@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/services/api";
+import { useAuth } from "@/components/auth-provider";
 
 type Mapping = Record<string, string>;
 
@@ -17,12 +18,14 @@ export default function MappingForm() {
   const [columns, setColumns] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Mapping>({});
   const [fileName, setFileName] = useState<string | null>(null);
+  const [fileRef, setFileRef] = useState<File | null>(null);
   const [datasetLabel, setDatasetLabel] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const progressTimer = useRef<number | null>(null);
   const { push } = useToast();
+  const { user } = useAuth();
 
   const parseFile = useCallback(async (file: File) => {
     const buffer = await file.arrayBuffer();
@@ -36,6 +39,7 @@ export default function MappingForm() {
 
   const onDrop = async (file: File) => {
     setFileName(file.name);
+    setFileRef(file);
     setUploading(true);
     setUploadProgress(0);
     if (progressTimer.current) {
@@ -68,6 +72,7 @@ export default function MappingForm() {
 
   const resetUpload = () => {
     setFileName(null);
+    setFileRef(null);
     setColumns([]);
     setMapping({});
     setUploading(false);
@@ -96,10 +101,23 @@ export default function MappingForm() {
       push({ title: "Map all required fields before retraining.", tone: "error" });
       return;
     }
+    if (!fileRef) {
+      push({ title: "Upload a dataset before retraining.", tone: "error" });
+      return;
+    }
+    if (!user) {
+      push({ title: "Login required.", tone: "error" });
+      return;
+    }
     setLoading(true);
     try {
-      await api.retrain();
-      push({ title: "Retrain triggered successfully.", tone: "success" });
+      const upload = await api.uploadDataset(user.uid, fileRef, mapping);
+      await api.retrain({
+        tenant_id: user.uid,
+        dataset_path: upload.dataset_path,
+        mapping_path: upload.mapping_path
+      });
+      push({ title: "Training queued successfully.", tone: "success" });
     } catch (err) {
       push({ title: "Retrain failed. Check API connection.", tone: "error" });
     } finally {

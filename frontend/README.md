@@ -14,6 +14,12 @@ Next.js 14 App Router frontend for the FastAPI backend. Provides an enterprise d
 Create `.env.local`:
 ```
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_FIREBASE_API_KEY=your_key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_domain
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_bucket
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
 ```
 
 ## Run Locally
@@ -22,6 +28,13 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Inngest (Local Queue)
+Run the local Inngest dev server in another terminal:
+```bash
+npx inngest-cli@latest dev -u http://localhost:3000/api/inngest
+```
+This enables queue processing for dataset training events.
 
 ## Run with Backend
 Terminal 1 (backend):
