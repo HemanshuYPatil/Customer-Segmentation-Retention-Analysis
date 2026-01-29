@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
+import json
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 from firestore_client import (
@@ -21,6 +22,7 @@ from firestore_client import (
     list_models,
     list_predictions,
     get_model,
+    get_training_run,
     write_prediction,
     get_prediction,
     set_default_model,
@@ -192,6 +194,65 @@ def models(x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
     if not x_tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant id")
     return list_models(x_tenant_id)
+
+@app.get("/models/{model_id}")
+def model_detail(model_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    model = get_model(x_tenant_id, model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    return model
+
+
+@app.get("/models/{model_id}/json")
+def model_json(model_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    model = get_model(x_tenant_id, model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    artifact_prefix = model.get("artifact_prefix")
+    if not artifact_prefix:
+        raise HTTPException(status_code=404, detail="Model artifact path missing")
+
+    filename = "kmeans_scores.json"
+
+    if artifact_prefix.startswith("b2://"):
+        _, bucket_and_prefix = artifact_prefix.split("b2://", 1)
+        bucket, prefix = bucket_and_prefix.split("/", 1)
+        client = get_b2_client()
+        if client is None:
+            raise HTTPException(status_code=500, detail="B2 client not configured. Set B2_* env vars in .env.")
+        key = f"{prefix}/{filename}"
+        try:
+            obj = client.get_object(Bucket=bucket, Key=key)
+            payload = obj["Body"].read().decode("utf-8")
+            return {"filename": filename, "data": json.loads(payload)}
+        except Exception:
+            raise HTTPException(status_code=404, detail="JSON artifact not found")
+
+    local_path = Path(artifact_prefix) / filename
+    if local_path.exists():
+        return {"filename": filename, "data": json.loads(local_path.read_text(encoding="utf-8"))}
+    raise HTTPException(status_code=404, detail="JSON artifact not found")
+
+
+@app.get("/models/{model_id}/dataset")
+def model_dataset(model_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    run = get_training_run(x_tenant_id, model_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    dataset_path = run.get("dataset_path")
+    if not dataset_path:
+        raise HTTPException(status_code=404, detail="Dataset path not found")
+    path = Path(dataset_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Dataset file not found")
+    df = pd.read_csv(path)
+    return {"path": str(path), "columns": list(df.columns), "rows": df.to_dict(orient="records")}
 
 
 @app.get("/models/default")
