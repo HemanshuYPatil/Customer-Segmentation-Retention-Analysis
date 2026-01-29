@@ -163,16 +163,18 @@ def main() -> None:
                 paths.artifacts / "ltv_xgb.joblib",
                 paths.artifacts / "segment_summary.csv",
                 paths.artifacts / "feature_store.csv",
+                paths.artifacts / "kmeans_scores.json",
             ]
             upload_files(client, b2_bucket, local_paths, prefix)
             artifact_prefix = f"b2://{b2_bucket}/{prefix}"
         else:
             artifact_prefix = str(paths.artifacts)
 
+        full_metrics = {**churn_metrics, **ltv_metrics, "business_cost": business_cost}
         write_training_metadata(
             tenant_id=args.tenant_id,
             run_id=run_id,
-            metrics={**churn_metrics, **ltv_metrics},
+            metrics=full_metrics,
             artifact_prefix=artifact_prefix,
             dataset_path=str(data_file),
             mapping_path=str(args.mapping_path) if args.mapping_path else None,
@@ -182,7 +184,7 @@ def main() -> None:
             tenant_id=args.tenant_id,
             model_id=run_id,
             name=model_name,
-            metrics={**churn_metrics, **ltv_metrics},
+            metrics=full_metrics,
             artifact_prefix=artifact_prefix,
         )
         write_segment_summary(

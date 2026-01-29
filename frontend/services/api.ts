@@ -66,6 +66,16 @@ export const api = {
   segments: () => request<SegmentSummary[]>("/segments"),
   models: () =>
     request<Array<{ model_id: string; name: string; metrics: Metrics; artifact_prefix: string }>>("/models"),
+  modelDetail: (modelId: string) =>
+    request<{ model_id: string; name: string; metrics: Metrics; artifact_prefix: string; created_at?: unknown }>(
+      `/models/${modelId}`
+    ),
+  modelJson: (modelId: string) =>
+    request<{ filename: string; data: unknown }>(`/models/${modelId}/json`),
+  modelDataset: (modelId: string) =>
+    request<{ path: string; columns: string[]; rows: Array<Record<string, unknown>> }>(
+      `/models/${modelId}/dataset`
+    ),
   defaultModel: () => request<{ model_id: string | null }>("/models/default"),
   setDefaultModel: (modelId: string) =>
     request<{ status: string }>("/models/default", {

@@ -104,9 +104,7 @@ def list_models(tenant_id: str) -> list[dict]:
     db = get_firestore()
     if db is None:
         return []
-    docs = (
-        db.collection("tenants").document(tenant_id).collection("models").order_by("created_at", direction=firestore.Query.DESCENDING).stream()
-    )
+    docs = db.collection("tenants").document(tenant_id).collection("models").stream()
     return [doc.to_dict() for doc in docs]
 
 
@@ -115,6 +113,20 @@ def get_model(tenant_id: str, model_id: str) -> Optional[dict]:
     if db is None:
         return None
     doc = db.collection("tenants").document(tenant_id).collection("models").document(model_id).get()
+    return doc.to_dict() if doc.exists else None
+
+
+def get_training_run(tenant_id: str, run_id: str) -> Optional[dict]:
+    db = get_firestore()
+    if db is None:
+        return None
+    doc = (
+        db.collection("tenants")
+        .document(tenant_id)
+        .collection("training_runs")
+        .document(run_id)
+        .get()
+    )
     return doc.to_dict() if doc.exists else None
 
 
