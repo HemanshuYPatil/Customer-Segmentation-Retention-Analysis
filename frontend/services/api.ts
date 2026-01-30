@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from "@/lib/api-base";
+
 export type HealthResponse = { status: string };
 
 export type PredictRequest = {
@@ -34,7 +36,7 @@ export type SegmentSummary = {
 
 export type Metrics = Record<string, number>;
 
-const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const baseUrl = getApiBaseUrl();
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const { auth } = await import("@/lib/firebase");

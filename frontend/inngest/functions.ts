@@ -1,10 +1,11 @@
 import { inngest } from "./client";
+import { getApiBaseUrl } from "@/lib/api-base";
 
 export const trainModel = inngest.createFunction(
   { id: "train-model" },
   { event: "model.train.requested" },
   async ({ event }) => {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const apiBase = getApiBaseUrl();
     const response = await fetch(`${apiBase}/train`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -22,7 +23,7 @@ export const predictSingle = inngest.createFunction(
   { id: "predict-single" },
   { event: "model.predict.single" },
   async ({ event }) => {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const apiBase = getApiBaseUrl();
     const response = await fetch(`${apiBase}/predict_job`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -40,7 +41,7 @@ export const predictBatch = inngest.createFunction(
   { id: "predict-batch" },
   { event: "model.predict.batch" },
   async ({ event }) => {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+    const apiBase = getApiBaseUrl();
     const response = await fetch(`${apiBase}/predict_job`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
