@@ -66,6 +66,16 @@ export const api = {
   segments: () => request<SegmentSummary[]>("/segments"),
   models: () =>
     request<Array<{ model_id: string; name: string; metrics: Metrics; artifact_prefix: string }>>("/models"),
+  modelDetail: (modelId: string) =>
+    request<{ model_id: string; name: string; metrics: Metrics; artifact_prefix: string; created_at?: unknown }>(
+      `/models/${modelId}`
+    ),
+  modelJson: (modelId: string) =>
+    request<{ filename: string; data: unknown }>(`/models/${modelId}/json`),
+  modelDataset: (modelId: string) =>
+    request<{ path: string; columns: string[]; rows: Array<Record<string, unknown>> }>(
+      `/models/${modelId}/dataset`
+    ),
   defaultModel: () => request<{ model_id: string | null }>("/models/default"),
   setDefaultModel: (modelId: string) =>
     request<{ status: string }>("/models/default", {
@@ -86,7 +96,7 @@ export const api = {
       }
     });
   },
-  retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string }) => {
+  retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string; notify_email?: string | null }) => {
     const res = await fetch("/api/queue/train", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -117,18 +127,19 @@ export const api = {
     }
     return res.json();
   },
-  queueSinglePrediction: async (payload: { tenant_id: string; model_id: string; customer_id?: number; features?: PredictRequest["features"] }) => {
+  queueSinglePrediction: async (payload: { tenant_id: string; model_id: string; customer_id?: number; features?: PredictRequest["features"]; notify_email?: string | null }) => {
     const res = await fetch("/api/queue/predict-single", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     if (!res.ok) {
-      throw new Error("Failed to queue single prediction");
+      const text = await res.text();
+      throw new Error(text || "Failed to queue single prediction");
     }
     return res.json();
   },
-  queueBatchPrediction: async (payload: { tenant_id: string; model_id: string }) => {
+  queueBatchPrediction: async (payload: { tenant_id: string; model_id: string; notify_email?: string | null }) => {
     const res = await fetch("/api/queue/predict-batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
