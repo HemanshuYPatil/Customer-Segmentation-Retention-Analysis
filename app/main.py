@@ -1,4 +1,4 @@
-from __future__ import annotations
+    from __future__ import annotations
 
 from pathlib import Path
 import sys
@@ -86,10 +86,11 @@ class TrainRequest(BaseModel):
 app = FastAPI(title="Customer Segmentation & Retention API")
 load_dotenv()
 
-# CORS for local Next.js + Inngest
+# CORS for local Next.js + production frontend
+origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[origin.strip() for origin in origins if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
