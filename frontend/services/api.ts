@@ -96,7 +96,7 @@ export const api = {
       }
     });
   },
-  retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string }) => {
+  retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string; notify_email?: string | null }) => {
     const res = await fetch("/api/queue/train", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -127,18 +127,19 @@ export const api = {
     }
     return res.json();
   },
-  queueSinglePrediction: async (payload: { tenant_id: string; model_id: string; customer_id?: number; features?: PredictRequest["features"] }) => {
+  queueSinglePrediction: async (payload: { tenant_id: string; model_id: string; customer_id?: number; features?: PredictRequest["features"]; notify_email?: string | null }) => {
     const res = await fetch("/api/queue/predict-single", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     if (!res.ok) {
-      throw new Error("Failed to queue single prediction");
+      const text = await res.text();
+      throw new Error(text || "Failed to queue single prediction");
     }
     return res.json();
   },
-  queueBatchPrediction: async (payload: { tenant_id: string; model_id: string }) => {
+  queueBatchPrediction: async (payload: { tenant_id: string; model_id: string; notify_email?: string | null }) => {
     const res = await fetch("/api/queue/predict-batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

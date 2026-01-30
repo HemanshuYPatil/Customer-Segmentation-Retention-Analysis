@@ -9,6 +9,7 @@ import os
 
 import joblib
 import pandas as pd
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,8 @@ from firestore_client import (
     get_default_model,
 )
 from storage import get_b2_client, download_file, presign_download_url
+from notifications import build_prediction_complete_email
+from email_queue_client import enqueue_email_via_frontend
 from pydantic import BaseModel, Field
 
 ARTIFACTS = ROOT / "artifacts"
@@ -79,9 +82,11 @@ class TrainRequest(BaseModel):
     tenant_id: str
     dataset_path: str
     mapping_path: Optional[str] = None
+    notify_email: Optional[str] = None
 
 
 app = FastAPI(title="Customer Segmentation & Retention API")
+load_dotenv()
 
 # CORS for local Next.js + Inngest
 app.add_middleware(
@@ -155,6 +160,8 @@ def train(request: TrainRequest) -> dict:
     ]
     if request.mapping_path:
         args += ["--mapping-path", request.mapping_path]
+    if request.notify_email:
+        args += ["--notify-email", request.notify_email]
     subprocess.Popen(args, cwd=str(ROOT))
     return {"status": "started", "job_id": job_id}
 
@@ -253,6 +260,16 @@ def model_dataset(model_id: str, x_tenant_id: Optional[str] = Header(None)) -> d
         raise HTTPException(status_code=404, detail="Dataset file not found")
     df = pd.read_csv(path)
     return {"path": str(path), "columns": list(df.columns), "rows": df.to_dict(orient="records")}
+
+
+@app.get("/models/{model_id}/customers/{customer_id}/exists")
+def customer_exists(model_id: str, customer_id: int, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    bundle = _load_artifacts_for_model(x_tenant_id, model_id)
+    store = bundle["feature_store"]
+    exists = not store[store["CustomerID"] == customer_id].empty
+    return {"exists": bool(exists)}
 
 
 @app.get("/models/default")
@@ -381,6 +398,7 @@ class PredictJobRequest(BaseModel):
     mode: str  # "single" or "batch"
     customer_id: Optional[int] = None
     features: Optional[FeaturePayload] = None
+    notify_email: Optional[str] = None
 
 
 def _load_artifacts_for_model(tenant_id: str, model_id: str) -> dict:
@@ -472,6 +490,23 @@ def predict_job(request: PredictJobRequest) -> dict:
             payload=request.dict(),
             result=result,
         )
+        if request.notify_email:
+            subject, text, html = build_prediction_complete_email(
+                tenant_id=request.tenant_id,
+                prediction_id=prediction_id,
+                mode="single",
+            )
+            try:
+                enqueue_email_via_frontend(
+                    to_email=request.notify_email,
+                    subject=subject,
+                    html=html,
+                    text=text,
+                    metadata={"type": "prediction_complete", "tenant_id": request.tenant_id},
+                    event_id=f"prediction-email-{prediction_id}",
+                )
+            except Exception as exc:
+                print(f"[email] queue failed: {exc}")
         return {"status": "completed", "prediction_id": prediction_id}
 
     if request.mode == "batch":
@@ -510,6 +545,25 @@ def predict_job(request: PredictJobRequest) -> dict:
             result=result_payload,
             batch_file_url=batch_file_url,
         )
+        if request.notify_email:
+            subject, text, html = build_prediction_complete_email(
+                tenant_id=request.tenant_id,
+                prediction_id=prediction_id,
+                mode="batch",
+                batch_file_url=batch_file_url,
+                count=int(len(results)),
+            )
+            try:
+                enqueue_email_via_frontend(
+                    to_email=request.notify_email,
+                    subject=subject,
+                    html=html,
+                    text=text,
+                    metadata={"type": "prediction_complete", "tenant_id": request.tenant_id},
+                    event_id=f"prediction-email-{prediction_id}",
+                )
+            except Exception as exc:
+                print(f"[email] queue failed: {exc}")
         return {"status": "completed", "prediction_id": prediction_id}
 
     raise HTTPException(status_code=400, detail="Invalid mode")

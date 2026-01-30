@@ -10,6 +10,7 @@ import yaml
 import mlflow
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
 from config import get_config, get_paths
 from data_pipeline import clean_transactions, load_raw_transactions, standardize_columns
@@ -25,6 +26,8 @@ from modeling import (
 )
 from reporting import build_segment_summary, recommend_actions, write_strategic_report
 from firestore_client import write_training_metadata, write_segment_summary, write_model_registry
+from notifications import build_training_complete_email
+from email_queue_client import enqueue_email_via_frontend
 
 
 def _load_mapping(mapping_path: Path) -> dict:
@@ -36,10 +39,12 @@ def _load_mapping(mapping_path: Path) -> dict:
 
 
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Train segmentation and churn models.")
     parser.add_argument("--data-path", type=str, default=None)
     parser.add_argument("--mapping-path", type=str, default=None)
     parser.add_argument("--tenant-id", type=str, default="local")
+    parser.add_argument("--notify-email", type=str, default=None)
     args = parser.parse_args()
 
     paths = get_paths()
@@ -192,6 +197,25 @@ def main() -> None:
             run_id=run_id,
             summary_rows=segment_summary.to_dict(orient="records"),
         )
+        if args.notify_email:
+            subject, text, html = build_training_complete_email(
+                tenant_id=args.tenant_id,
+                run_id=run_id,
+                metrics=full_metrics,
+                artifact_prefix=artifact_prefix,
+                model_name=model_name,
+            )
+            try:
+                enqueue_email_via_frontend(
+                    to_email=args.notify_email,
+                    subject=subject,
+                    html=html,
+                    text=text,
+                    metadata={"type": "training_complete", "tenant_id": args.tenant_id, "run_id": run_id},
+                    event_id=f"training-email-{run_id}",
+                )
+            except Exception as exc:
+                print(f"[email] queue failed: {exc}")
 
 
 if __name__ == "__main__":
