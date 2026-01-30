@@ -1,0 +1,18 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/queue/email/route": "app/api/queue/email/route.js",
+  "/api/queue/predict-batch/route": "app/api/queue/predict-batch/route.js",
+  "/api/queue/predict-single/route": "app/api/queue/predict-single/route.js",
+  "/api/queue/train/route": "app/api/queue/train/route.js",
+  "/api/inngest/route": "app/api/inngest/route.js",
+  "/(auth)/login/page": "app/(auth)/login/page.js",
+  "/(dashboard)/models/[id]/page": "app/(dashboard)/models/[id]/page.js",
+  "/(dashboard)/onboarding/page": "app/(dashboard)/onboarding/page.js",
+  "/(auth)/register/page": "app/(auth)/register/page.js",
+  "/(dashboard)/models/page": "app/(dashboard)/models/page.js",
+  "/(dashboard)/predictions/[id]/page": "app/(dashboard)/predictions/[id]/page.js",
+  "/(dashboard)/page": "app/(dashboard)/page.js",
+  "/(dashboard)/predictions/batch/[id]/page": "app/(dashboard)/predictions/batch/[id]/page.js",
+  "/(dashboard)/upload-dataset/page": "app/(dashboard)/upload-dataset/page.js",
+  "/(dashboard)/predictions/page": "app/(dashboard)/predictions/page.js"
+}
