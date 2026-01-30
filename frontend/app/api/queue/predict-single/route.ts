@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
+import { getApiBaseUrl } from "@/lib/api-base";
 
 export async function POST(request: NextRequest) {
   const payload = await request.json();
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const apiBase = getApiBaseUrl();
   if (payload?.customer_id) {
     const existsRes = await fetch(
       `${apiBase}/models/${payload.model_id}/customers/${payload.customer_id}/exists`,
