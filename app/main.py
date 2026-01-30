@@ -13,7 +13,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-import sqlite3
 import json
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
@@ -33,8 +32,6 @@ from storage import get_b2_client, download_file, presign_download_url
 from notifications import build_prediction_complete_email
 from email_queue_client import enqueue_email_via_frontend
 from pydantic import BaseModel, Field
-
-ARTIFACTS = ROOT / "artifacts"
 
 FEATURE_COLS = [
     "recency_days",
@@ -68,6 +65,7 @@ class FeaturePayload(BaseModel):
 class PredictRequest(BaseModel):
     customer_id: Optional[int] = None
     features: Optional[FeaturePayload] = None
+    model_id: Optional[str] = None
 
 
 class PredictResponse(BaseModel):
@@ -98,22 +96,7 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def load_artifacts() -> None:
-    app.state.scaler = joblib.load(ARTIFACTS / "scaler.joblib")
-    app.state.kmeans = joblib.load(ARTIFACTS / "kmeans.joblib")
-    churn_best = ARTIFACTS / "churn_best.joblib"
-    if churn_best.exists():
-        app.state.churn_model = joblib.load(churn_best)
-    else:
-        app.state.churn_model = joblib.load(ARTIFACTS / "churn_xgb.joblib")
-    app.state.ltv_model = joblib.load(ARTIFACTS / "ltv_xgb.joblib")
-    app.state.feature_store = pd.read_csv(ARTIFACTS / "feature_store.csv")
-    app.state.segment_summary = pd.read_csv(ARTIFACTS / "segment_summary.csv")
-
-
-def get_action_for_segment(segment: int) -> str:
-    summary = app.state.segment_summary
+def _action_for_segment(summary: pd.DataFrame, segment: int) -> str:
     row = summary[summary["segment"] == segment]
     if row.empty:
         return "General nurture"
@@ -168,32 +151,16 @@ def train(request: TrainRequest) -> dict:
 
 @app.get("/metrics")
 def metrics(x_tenant_id: Optional[str] = Header(None)) -> dict:
-    if x_tenant_id:
-        return get_latest_metrics(x_tenant_id)
-    db_path = ROOT / "mlflow.db"
-    if not db_path.exists():
-        return {}
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute("SELECT run_uuid FROM runs ORDER BY start_time DESC LIMIT 1")
-    row = cur.fetchone()
-    if not row:
-        conn.close()
-        return {}
-    run_id = row[0]
-    cur.execute("SELECT key, value FROM metrics WHERE run_uuid=?", (run_id,))
-    data = {k: float(v) for k, v in cur.fetchall()}
-    conn.close()
-    return data
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    return get_latest_metrics(x_tenant_id)
 
 
 @app.get("/segments")
 def segments(x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
-    if x_tenant_id:
-        return get_latest_segments(x_tenant_id)
-    if not hasattr(app.state, "segment_summary"):
-        return []
-    return app.state.segment_summary.to_dict(orient="records")
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    return get_latest_segments(x_tenant_id)
 
 
 @app.get("/models")
@@ -357,7 +324,21 @@ def prediction_csv(prediction_id: str, x_tenant_id: Optional[str] = Header(None)
 
 
 @app.post("/predict", response_model=PredictResponse)
-def predict(request: PredictRequest) -> PredictResponse:
+def predict(request: PredictRequest, x_tenant_id: Optional[str] = Header(None)) -> PredictResponse:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    model_id = request.model_id or get_default_model(x_tenant_id)
+    if not model_id:
+        raise HTTPException(status_code=400, detail="Missing model id")
+
+    bundle = _load_artifacts_for_model(x_tenant_id, model_id)
+    scaler = bundle["scaler"]
+    kmeans = bundle["kmeans"]
+    churn_model = bundle["churn_model"]
+    ltv_model = bundle["ltv_model"]
+    summary = bundle["segment_summary"]
+    store = bundle["feature_store"]
+
     if request.customer_id is None and request.features is None:
         raise HTTPException(status_code=400, detail="Provide customer_id or features")
 
@@ -365,23 +346,17 @@ def predict(request: PredictRequest) -> PredictResponse:
         features = pd.DataFrame([request.features.dict()])
         customer_id = request.customer_id
     else:
-        store = app.state.feature_store
         row = store[store["CustomerID"] == request.customer_id]
         if row.empty:
             raise HTTPException(status_code=404, detail="Customer not found")
         features = row[FEATURE_COLS]
         customer_id = int(request.customer_id)
 
-    scaler = app.state.scaler
-    kmeans = app.state.kmeans
-    churn_model = app.state.churn_model
-    ltv_model = app.state.ltv_model
-
     segment = int(kmeans.predict(scaler.transform(features[SEGMENT_COLS]))[0])
     churn_prob = float(churn_model.predict_proba(features[FEATURE_COLS])[:, 1][0])
     ltv_pred = float(ltv_model.predict(features[FEATURE_COLS])[0])
 
-    action = get_action_for_segment(segment)
+    action = _action_for_segment(summary, segment)
 
     return PredictResponse(
         customer_id=customer_id,
@@ -438,13 +413,6 @@ def _load_artifacts_for_model(tenant_id: str, model_id: str) -> dict:
         "segment_summary": pd.read_csv(base / "segment_summary.csv"),
         "feature_store": pd.read_csv(base / "feature_store.csv"),
     }
-
-
-def _action_for_segment(summary: pd.DataFrame, segment: int) -> str:
-    row = summary[summary["segment"] == segment]
-    if row.empty:
-        return "General nurture"
-    return row.iloc[0]["recommended_action"]
 
 
 @app.post("/predict_job")
