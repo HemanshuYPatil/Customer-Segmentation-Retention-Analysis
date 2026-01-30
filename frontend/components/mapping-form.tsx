@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/services/api";
 import { useAuth } from "@/components/auth-provider";
+import { useRouter } from "next/navigation";
 
 type Mapping = Record<string, string>;
 
@@ -26,6 +27,7 @@ export default function MappingForm() {
   const progressTimer = useRef<number | null>(null);
   const { push } = useToast();
   const { user } = useAuth();
+  const router = useRouter();
 
   const parseFile = useCallback(async (file: File) => {
     const buffer = await file.arrayBuffer();
@@ -96,17 +98,25 @@ export default function MappingForm() {
     [columns, mapping, selectedValues]
   );
 
-  const handleRetrain = async () => {
+  const handleTrain = async () => {
     if (!canSubmit) {
-      push({ title: "Map all required fields before retraining.", tone: "error" });
+      push({
+        title: "Complete required mapping.",
+        description: "Map all required fields before training.",
+        tone: "error"
+      });
       return;
     }
     if (!fileRef) {
-      push({ title: "Upload a dataset before retraining.", tone: "error" });
+      push({
+        title: "Upload a dataset.",
+        description: "Select a CSV or Excel file to continue.",
+        tone: "error"
+      });
       return;
     }
     if (!user) {
-      push({ title: "Login required.", tone: "error" });
+      push({ title: "Login required.", description: "Sign in to train a model.", tone: "error" });
       return;
     }
     setLoading(true);
@@ -115,11 +125,30 @@ export default function MappingForm() {
       await api.retrain({
         tenant_id: user.uid,
         dataset_path: upload.dataset_path,
-        mapping_path: upload.mapping_path
+        mapping_path: upload.mapping_path,
+        notify_email: user.email
       });
-      push({ title: "Training queued successfully.", tone: "success" });
+      const pending = JSON.parse(
+        window.localStorage.getItem("pending-models") ?? "[]"
+      ) as Array<{ tempId: string; name: string; createdAt: number }>;
+      const safeName = datasetLabel?.trim() || "New model";
+      const next = [
+        { tempId: `queued-${Date.now()}`, name: safeName, createdAt: Date.now() },
+        ...pending
+      ];
+      window.localStorage.setItem("pending-models", JSON.stringify(next));
+      push({
+        title: "Training queued.",
+        description: "We will email you when the model is ready.",
+        tone: "success"
+      });
+      router.push("/models");
     } catch (err) {
-      push({ title: "Retrain failed. Check API connection.", tone: "error" });
+      push({
+        title: "Training failed.",
+        description: "Check the API connection and try again.",
+        tone: "error"
+      });
     } finally {
       setLoading(false);
     }
@@ -246,11 +275,11 @@ export default function MappingForm() {
 
             <div className="flex items-center justify-between rounded-xl border border-panelBorder bg-background p-4 lg:col-span-2">
               <div>
-                <p className="text-sm font-semibold">Retrain model</p>
+                <p className="text-sm font-semibold">Train model</p>
                 <p className="text-xs text-muted">We will validate your mapping and start training.</p>
               </div>
-              <Button onClick={handleRetrain} disabled={loading}>
-                {loading ? "Retraining..." : "Retrain Model"}
+              <Button onClick={handleTrain} disabled={loading} loading={loading}>
+                Train Model
               </Button>
             </div>
           </div>

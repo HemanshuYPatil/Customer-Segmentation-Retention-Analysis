@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  distDir: 'build_output',
   reactStrictMode: true,
-  experimental: {
-    typedRoutes: true
-  }
 };
 
 export default nextConfig;
