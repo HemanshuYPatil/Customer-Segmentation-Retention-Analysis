@@ -62,6 +62,8 @@ export default function PredictionsPage() {
   const [customerId, setCustomerId] = useState("");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [predictionType, setPredictionType] = useState<"single" | "batch">("single");
+  const [isQueueingSingle, setIsQueueingSingle] = useState(false);
+  const [isQueueingBatch, setIsQueueingBatch] = useState(false);
   const [pendingBatches, setPendingBatches] = useState<
     Array<{ tempId: string; modelId: string; createdAt: number; mode: "single" | "batch" }>
   >([]);
@@ -115,44 +117,83 @@ export default function PredictionsPage() {
 
   const runSingle = async () => {
     if (!user) {
-      push({ title: "Login required.", tone: "error" });
+      push({ title: "Login required.", description: "Sign in to run predictions.", tone: "error" });
       return;
     }
     if (!selectedModel) {
-      push({ title: "Select a model.", tone: "error" });
+      push({ title: "Select a model.", description: "Choose a trained model first.", tone: "error" });
       return;
     }
     const id = Number(customerId);
     if (!id) {
-      push({ title: "Enter a valid customer ID.", tone: "error" });
+      push({ title: "Enter a valid customer ID.", description: "Use a numeric customer ID.", tone: "error" });
       return;
     }
-    await api.queueSinglePrediction({ tenant_id: user.uid, model_id: selectedModel, customer_id: id });
-    push({ title: "Single prediction started.", tone: "success" });
-    setPendingBatches((prev) => [
-      { tempId: `queued-${Date.now()}-single`, modelId: selectedModel, createdAt: Date.now(), mode: "single" },
-      ...prev
-    ]);
-    setCustomerId("");
-    setIsCreateOpen(false);
+    setIsQueueingSingle(true);
+    try {
+      await api.queueSinglePrediction({
+        tenant_id: user.uid,
+        model_id: selectedModel,
+        customer_id: id,
+        notify_email: user.email
+      });
+      push({
+        title: "Single prediction queued.",
+        description: "We will email you when the result is ready.",
+        tone: "success"
+      });
+      setPendingBatches((prev) => [
+        { tempId: `queued-${Date.now()}-single`, modelId: selectedModel, createdAt: Date.now(), mode: "single" },
+        ...prev
+      ]);
+      setCustomerId("");
+      setIsCreateOpen(false);
+    } catch (err) {
+      push({
+        title: "Prediction failed.",
+        description: "Check the customer ID and API connection.",
+        tone: "error"
+      });
+    } finally {
+      setIsQueueingSingle(false);
+    }
   };
 
   const runBatch = async () => {
     if (!user) {
-      push({ title: "Login required.", tone: "error" });
+      push({ title: "Login required.", description: "Sign in to run predictions.", tone: "error" });
       return;
     }
     if (!selectedModel) {
-      push({ title: "Select a model.", tone: "error" });
+      push({ title: "Select a model.", description: "Choose a trained model first.", tone: "error" });
       return;
     }
-    await api.queueBatchPrediction({ tenant_id: user.uid, model_id: selectedModel });
-    setPendingBatches((prev) => [
-      { tempId: `queued-${Date.now()}-batch`, modelId: selectedModel, createdAt: Date.now(), mode: "batch" },
-      ...prev
-    ]);
-    push({ title: "Batch prediction started.", tone: "success" });
-    setIsCreateOpen(false);
+    setIsQueueingBatch(true);
+    try {
+      await api.queueBatchPrediction({
+        tenant_id: user.uid,
+        model_id: selectedModel,
+        notify_email: user.email
+      });
+      setPendingBatches((prev) => [
+        { tempId: `queued-${Date.now()}-batch`, modelId: selectedModel, createdAt: Date.now(), mode: "batch" },
+        ...prev
+      ]);
+      push({
+        title: "Batch prediction queued.",
+        description: "We will email you when the file is ready.",
+        tone: "success"
+      });
+      setIsCreateOpen(false);
+    } catch (err) {
+      push({
+        title: "Batch prediction failed.",
+        description: "Check the API connection and try again.",
+        tone: "error"
+      });
+    } finally {
+      setIsQueueingBatch(false);
+    }
   };
 
   return (
@@ -316,7 +357,7 @@ export default function PredictionsPage() {
                       value={customerId}
                       onChange={(e) => setCustomerId(e.target.value)}
                     />
-                    <Button onClick={runSingle} disabled={!customerId || !selectedModel}>
+                    <Button onClick={runSingle} disabled={!customerId || !selectedModel} loading={isQueueingSingle}>
                       Run single prediction
                     </Button>
                   </div>
@@ -328,7 +369,7 @@ export default function PredictionsPage() {
                     Run predictions for all customers in the model dataset.
                   </p>
                   <div className="mt-3">
-                    <Button onClick={runBatch} disabled={!selectedModel}>
+                    <Button onClick={runBatch} disabled={!selectedModel} loading={isQueueingBatch}>
                       Run batch prediction
                     </Button>
                   </div>

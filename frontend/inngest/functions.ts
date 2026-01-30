@@ -54,4 +54,42 @@ export const predictBatch = inngest.createFunction(
   }
 );
 
-export const functions = [trainModel, predictSingle, predictBatch];
+export const sendEmail = inngest.createFunction(
+  { id: "send-email" },
+  { event: "email.send" },
+  async ({ event }) => {
+    const apiUrl = process.env.BREVO_API_URL ?? "https://api.brevo.com/v3/smtp/email";
+    const apiKey = process.env.BREVO_API_KEY;
+    const senderEmail = process.env.BREVO_SENDER_EMAIL;
+    const senderName = process.env.BREVO_SENDER_NAME ?? "Customer Segmentation";
+    if (!apiKey || !senderEmail) {
+      throw new Error("Missing BREVO_API_KEY or BREVO_SENDER_EMAIL");
+    }
+    const body: Record<string, unknown> = {
+      sender: { email: senderEmail, name: senderName },
+      to: [{ email: event.data.to_email }],
+      subject: event.data.subject,
+      htmlContent: event.data.html,
+      textContent: event.data.text
+    };
+    if (event.data?.metadata && Object.keys(event.data.metadata).length > 0) {
+      body.params = event.data.metadata;
+    }
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "api-key": apiKey,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Brevo send failed: ${text}`);
+    }
+    return { status: "sent" };
+  }
+);
+
+export const functions = [trainModel, predictSingle, predictBatch, sendEmail];

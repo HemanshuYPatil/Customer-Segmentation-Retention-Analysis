@@ -3,7 +3,12 @@
 import { createContext, ReactNode, useContext, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
-type Toast = { id: string; title: string; tone?: "success" | "error" | "info" };
+type Toast = {
+  id: string;
+  title: string;
+  description?: string;
+  tone?: "success" | "error" | "info";
+};
 
 type ToastContextValue = {
   toasts: Toast[];
@@ -45,18 +50,37 @@ export function useToast() {
 export function ToastViewport() {
   const ctx = useToast();
   return (
-    <div className="fixed right-5 top-5 z-50 flex flex-col gap-3">
+    <div
+      className="fixed bottom-5 right-5 z-[200] flex max-w-[360px] flex-col gap-3"
+      role="status"
+      aria-live="polite"
+    >
       {ctx.toasts.map((toast) => (
         <div
           key={toast.id}
           className={cn(
-            "rounded-lg border px-4 py-3 text-sm shadow-lg",
-            toast.tone === "success" && "border-success/50 bg-success/10 text-success",
-            toast.tone === "error" && "border-danger/50 bg-danger/10 text-danger",
-            toast.tone === "info" && "border-accent/50 bg-accentSoft text-text"
+            "rounded-xl border bg-panel px-4 py-3 text-sm text-text shadow-lg",
+            toast.tone === "success" && "border-success/50",
+            toast.tone === "error" && "border-danger/50",
+            toast.tone === "info" && "border-accent/50"
           )}
         >
-          {toast.title}
+          <div className="flex items-start gap-2">
+            <span
+              className={cn(
+                "mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-full",
+                toast.tone === "success" && "bg-success",
+                toast.tone === "error" && "bg-danger",
+                toast.tone === "info" && "bg-accent"
+              )}
+            />
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-semibold">{toast.title}</p>
+              {toast.description && (
+                <p className="text-xs text-muted">{toast.description}</p>
+              )}
+            </div>
+          </div>
         </div>
       ))}
     </div>
