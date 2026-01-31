@@ -63,6 +63,8 @@ def main() -> None:
     args = parser.parse_args()
 
     paths = get_paths()
+    if not os.getenv("MLFLOW_TRACKING_URI"):
+        mlflow.set_tracking_uri(f"file:{paths.root / 'mlruns'}")
     config = get_config()
 
     paths.artifacts.mkdir(parents=True, exist_ok=True)
