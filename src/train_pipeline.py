@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from config import get_config, get_paths
 from data_pipeline import clean_transactions, load_raw_transactions, standardize_columns
-from storage import get_b2_client, upload_files
+from storage import get_b2_client, upload_files, download_file, parse_b2_url
 from features import build_rfm_features, build_time_split_features
 from modeling import (
     ModelArtifacts,
@@ -38,6 +38,21 @@ def _load_mapping(mapping_path: Path) -> dict:
         return json.load(f)
 
 
+def _resolve_b2_input(url: str, tenant_id: str, label: str) -> Path:
+    parsed = parse_b2_url(url)
+    if not parsed:
+        return Path(url)
+    bucket, key = parsed
+    client = get_b2_client()
+    if client is None:
+        raise RuntimeError(f"B2 client not configured for {label}")
+    cache_dir = Path(__file__).resolve().parents[1] / "artifacts_cache" / tenant_id / "inputs"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    local_path = cache_dir / Path(key).name
+    download_file(client, bucket, key, local_path)
+    return local_path
+
+
 def main() -> None:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Train segmentation and churn models.")
@@ -54,9 +69,12 @@ def main() -> None:
     paths.reports.mkdir(parents=True, exist_ok=True)
 
     data_file = Path(args.data_path) if args.data_path else config.data_file
+    if args.data_path:
+        data_file = _resolve_b2_input(args.data_path, args.tenant_id, "dataset")
     df_raw = load_raw_transactions(str(data_file))
     if args.mapping_path:
-        mapping = _load_mapping(Path(args.mapping_path))
+        mapping_path = _resolve_b2_input(args.mapping_path, args.tenant_id, "mapping")
+        mapping = _load_mapping(mapping_path)
         df_raw = standardize_columns(df_raw, mapping)
     df = clean_transactions(df_raw)
 

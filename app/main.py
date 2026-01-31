@@ -29,7 +29,7 @@ from firestore_client import (
     set_default_model,
     get_default_model,
 )
-from storage import get_b2_client, download_file, presign_download_url
+from storage import get_b2_client, download_file, presign_download_url, parse_b2_url
 from notifications import build_prediction_complete_email
 from email_queue_client import enqueue_email_via_frontend
 from pydantic import BaseModel, Field
@@ -131,11 +131,35 @@ async def upload_dataset(
     file: UploadFile = File(...),
     mapping: Optional[str] = Form(None),
 ) -> dict:
+    filename = Path(file.filename).name
+    content = await file.read()
+
+    b2_bucket = os.getenv("B2_BUCKET")
+    client = get_b2_client()
+    if client and b2_bucket:
+        upload_id = str(uuid.uuid4())
+        base_prefix = f"tenants/{tenant_id}/datasets/{upload_id}"
+        dataset_key = f"{base_prefix}/{filename}"
+        client.put_object(Bucket=b2_bucket, Key=dataset_key, Body=content)
+        dataset_path = f"b2://{b2_bucket}/{dataset_key}"
+        mapping_path = None
+        if mapping:
+            mapping_key = f"{base_prefix}/mapping.json"
+            client.put_object(
+                Bucket=b2_bucket,
+                Key=mapping_key,
+                Body=mapping.encode("utf-8"),
+                ContentType="application/json",
+            )
+            mapping_path = f"b2://{b2_bucket}/{mapping_key}"
+        return {
+            "dataset_path": dataset_path,
+            "mapping_path": mapping_path,
+        }
+
     tenant_dir = ROOT / "dataset" / "tenants" / tenant_id
     tenant_dir.mkdir(parents=True, exist_ok=True)
-    filename = Path(file.filename).name
     dataset_path = tenant_dir / filename
-    content = await file.read()
     dataset_path.write_bytes(content)
     mapping_path = None
     if mapping:
@@ -255,9 +279,19 @@ def model_dataset(model_id: str, x_tenant_id: Optional[str] = Header(None)) -> d
     dataset_path = run.get("dataset_path")
     if not dataset_path:
         raise HTTPException(status_code=404, detail="Dataset path not found")
-    path = Path(dataset_path)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Dataset file not found")
+    parsed = parse_b2_url(dataset_path)
+    if parsed:
+        bucket, key = parsed
+        client = get_b2_client()
+        if client is None:
+            raise HTTPException(status_code=500, detail="B2 client not configured")
+        temp_path = ROOT / "artifacts_cache" / x_tenant_id / "datasets" / Path(key).name
+        download_file(client, bucket, key, temp_path)
+        path = temp_path
+    else:
+        path = Path(dataset_path)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Dataset file not found")
     df = pd.read_csv(path)
     return {"path": str(path), "columns": list(df.columns), "rows": df.to_dict(orient="records")}
 
