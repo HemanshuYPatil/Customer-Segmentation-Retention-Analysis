@@ -30,6 +30,16 @@ def get_b2_client():
     )
 
 
+def parse_b2_url(url: str) -> tuple[str, str] | None:
+    if not url or not url.startswith("b2://"):
+        return None
+    _, bucket_and_key = url.split("b2://", 1)
+    if "/" not in bucket_and_key:
+        return None
+    bucket, key = bucket_and_key.split("/", 1)
+    return bucket, key
+
+
 def upload_files(client, bucket: str, local_paths: Iterable[Path], prefix: str) -> None:
     for path in local_paths:
         key = f"{prefix}/{path.name}"
