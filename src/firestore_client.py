@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import urllib.request
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from typing import Any, Dict, Optional
 
 import firebase_admin
 from firebase_admin import credentials, firestore
+from storage import get_b2_client, download_file, parse_b2_url
 
 
 _APP = None
@@ -17,13 +20,49 @@ ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env", override=False)
 
 
+def _download_service_account_from_url(url: str, dest: Path) -> Optional[Path]:
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(url) as response:
+            dest.write_bytes(response.read())
+        return dest
+    except Exception as exc:  # pragma: no cover
+        print(f"Service account download failed: {exc}")
+        return None
+
+
+def _resolve_service_account_path(raw_path: str) -> Optional[Path]:
+    if not raw_path:
+        return None
+    parsed_b2 = parse_b2_url(raw_path)
+    if parsed_b2:
+        bucket, key = parsed_b2
+        client = get_b2_client()
+        if client is None:
+            return None
+        cache_dir = ROOT / "artifacts_cache" / "secrets"
+        local_path = cache_dir / Path(key).name
+        download_file(client, bucket, key, local_path)
+        return local_path
+    parsed_url = urlparse(raw_path)
+    if parsed_url.scheme in {"http", "https"}:
+        cache_dir = ROOT / "artifacts_cache" / "secrets"
+        filename = Path(parsed_url.path).name or "firebase-service-account.json"
+        return _download_service_account_from_url(raw_path, cache_dir / filename)
+    path = Path(raw_path)
+    if path.exists():
+        return path
+    return None
+
+
 def get_firestore():
     global _APP
     if _APP is None:
-        service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+        raw_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+        service_account_path = _resolve_service_account_path(raw_path)
         if not service_account_path:
             return None
-        cred = credentials.Certificate(service_account_path)
+        cred = credentials.Certificate(str(service_account_path))
         _APP = firebase_admin.initialize_app(cred)
     return firestore.client()
 
