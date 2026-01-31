@@ -64,7 +64,30 @@ def main() -> None:
 
     paths = get_paths()
     if not os.getenv("MLFLOW_TRACKING_URI"):
-        mlflow.set_tracking_uri(f"file:{paths.root / 'mlruns'}")
+        tracking_dir = paths.root / "mlruns"
+        tracking_dir.mkdir(parents=True, exist_ok=True)
+        # Clean malformed experiment dirs that can break FileStore listing.
+        for exp_dir in tracking_dir.iterdir():
+            if not exp_dir.is_dir():
+                continue
+            meta = exp_dir / "meta.yaml"
+            if not meta.exists():
+                try:
+                    for child in exp_dir.iterdir():
+                        if child.is_file():
+                            child.unlink()
+                        elif child.is_dir():
+                            for nested in child.rglob("*"):
+                                if nested.is_file():
+                                    nested.unlink()
+                            for nested in sorted(child.rglob("*"), reverse=True):
+                                if nested.is_dir():
+                                    nested.rmdir()
+                            child.rmdir()
+                    exp_dir.rmdir()
+                except Exception:
+                    pass
+        mlflow.set_tracking_uri(f"file:{tracking_dir}")
     config = get_config()
 
     paths.artifacts.mkdir(parents=True, exist_ok=True)
