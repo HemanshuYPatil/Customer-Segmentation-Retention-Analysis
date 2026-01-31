@@ -71,6 +71,9 @@ export default function MappingForm() {
   };
 
   const canSubmit = requiredFields.every((field) => mapping[field.key]);
+  const hasQuantityAndUnitPrice = Boolean(mapping.quantity && mapping.unit_price);
+  const hasOrderTotal = Boolean(mapping.order_total);
+  const hasPricingFields = hasQuantityAndUnitPrice || hasOrderTotal;
 
   const resetUpload = () => {
     setFileName(null);
@@ -103,6 +106,14 @@ export default function MappingForm() {
       push({
         title: "Complete required mapping.",
         description: "Map all required fields before training.",
+        tone: "error"
+      });
+      return;
+    }
+    if (!hasPricingFields) {
+      push({
+        title: "Pricing fields required.",
+        description: "Map quantity + unit price, or order total.",
         tone: "error"
       });
       return;
