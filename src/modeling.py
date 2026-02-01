@@ -61,8 +61,9 @@ def train_segmentation(features: pd.DataFrame, random_state: int, k_range: Tuple
             "avg_interpurchase_days",
         ]
     ].copy()
+    seg_features = seg_features.astype(np.float32)
     scaler = StandardScaler()
-    X = scaler.fit_transform(seg_features)
+    X = scaler.fit_transform(seg_features).astype(np.float32, copy=False)
     best_k, scores = select_kmeans_k(X, k_range, random_state)
     kmeans = KMeans(n_clusters=best_k, random_state=random_state, n_init=10)
     features["segment"] = kmeans.fit_predict(X)
@@ -94,8 +95,8 @@ def train_churn_models(
             "avg_interpurchase_days",
             "purchase_span_days",
         ]
-    ]
-    y = features["churn_label"]
+    ].to_numpy(dtype=np.float32)
+    y = features["churn_label"].to_numpy(dtype=np.int8)
 
     X_temp, X_test, y_temp, y_test = train_test_split(
         X, y, test_size=0.2, random_state=random_state, stratify=y
@@ -118,10 +119,9 @@ def train_churn_models(
         raise ImportError("xgboost is required for XGBClassifier")
 
     candidate_params = [
-        {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.05},
-        {"n_estimators": 500, "max_depth": 4, "learning_rate": 0.03},
-        {"n_estimators": 400, "max_depth": 5, "learning_rate": 0.05},
-        {"n_estimators": 600, "max_depth": 6, "learning_rate": 0.03},
+        {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05},
+        {"n_estimators": 250, "max_depth": 5, "learning_rate": 0.05},
+        {"n_estimators": 300, "max_depth": 5, "learning_rate": 0.03},
     ]
 
     best_xgb = None
@@ -136,6 +136,10 @@ def train_churn_models(
             colsample_bytree=0.8,
             random_state=random_state,
             eval_metric="logloss",
+            tree_method="hist",
+            max_bin=128,
+            n_jobs=1,
+            verbosity=0,
         )
         model.fit(X_train, y_train)
         val_prob = model.predict_proba(X_val)[:, 1]
@@ -185,8 +189,8 @@ def train_ltv_model(features: pd.DataFrame, random_state: int) -> Tuple[object, 
             "avg_interpurchase_days",
             "purchase_span_days",
         ]
-    ]
-    y = features["future_spend"]
+    ].to_numpy(dtype=np.float32)
+    y = features["future_spend"].to_numpy(dtype=np.float32)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=random_state
@@ -196,12 +200,16 @@ def train_ltv_model(features: pd.DataFrame, random_state: int) -> Tuple[object, 
         raise ImportError("xgboost is required for XGBRegressor")
 
     xgb = XGBRegressor(
-        n_estimators=400,
+        n_estimators=300,
         max_depth=5,
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=random_state,
+        tree_method="hist",
+        max_bin=128,
+        n_jobs=1,
+        verbosity=0,
     )
     xgb.fit(X_train, y_train)
     preds = xgb.predict(X_test)
