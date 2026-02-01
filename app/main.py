@@ -387,7 +387,8 @@ def predict(request: PredictRequest, x_tenant_id: Optional[str] = Header(None)) 
         features = row[FEATURE_COLS]
         customer_id = int(request.customer_id)
 
-    segment = int(kmeans.predict(scaler.transform(features[SEGMENT_COLS]))[0])
+    segment_features = features[SEGMENT_COLS].to_numpy(dtype="float64", copy=False)
+    segment = int(kmeans.predict(scaler.transform(segment_features))[0])
     churn_prob = float(churn_model.predict_proba(features[FEATURE_COLS])[:, 1][0])
     ltv_pred = float(ltv_model.predict(features[FEATURE_COLS])[0])
 
@@ -475,7 +476,8 @@ def predict_job(request: PredictJobRequest) -> dict:
             features = row[FEATURE_COLS]
             customer_id = int(request.customer_id)
 
-        segment = int(kmeans.predict(scaler.transform(features[SEGMENT_COLS]))[0])
+        segment_features = features[SEGMENT_COLS].to_numpy(dtype="float64", copy=False)
+        segment = int(kmeans.predict(scaler.transform(segment_features))[0])
         churn_prob = float(churn_model.predict_proba(features[FEATURE_COLS])[:, 1][0])
         ltv_pred = float(ltv_model.predict(features[FEATURE_COLS])[0])
         action = _action_for_segment(summary, segment)
@@ -514,7 +516,8 @@ def predict_job(request: PredictJobRequest) -> dict:
 
     if request.mode == "batch":
         features = store[FEATURE_COLS]
-        segments = kmeans.predict(scaler.transform(store[SEGMENT_COLS]))
+        segment_features = store[SEGMENT_COLS].to_numpy(dtype="float64", copy=False)
+        segments = kmeans.predict(scaler.transform(segment_features))
         churn_probs = churn_model.predict_proba(features)[:, 1]
         ltv_preds = ltv_model.predict(features)
         results = store[["CustomerID"]].copy()
