@@ -1,11 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { api } from "@/services/api";
-import { useToast } from "@/components/ui/toast";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
@@ -69,8 +67,6 @@ function getTimestampMs(value: any) {
 }
 
 export default function ModelsPage() {
-  const { push } = useToast();
-
   const metricsQuery = useQuery({
     queryKey: ["metrics"],
     queryFn: api.metrics,
@@ -107,7 +103,6 @@ export default function ModelsPage() {
       (a: any, b: any) => getTimestampMs(b.created_at) - getTimestampMs(a.created_at)
     );
   }, [modelsQuery.data]);
-  const [cancelingId, setCancelingId] = useState<string | null>(null);
   const pendingModels = useMemo(() => {
     const visible = new Set(["queued", "processing", "failed", "canceled"]);
     return (queueQuery.data ?? [])
@@ -122,30 +117,10 @@ export default function ModelsPage() {
 
   const hasRows = pendingModels.length + modelRows.length > 0;
 
-  const setDefault = async (modelId: string) => {
-    await api.setDefaultModel(modelId);
-    push({ title: "Default model updated.", tone: "success" });
-  };
-
-  const cancelJob = async (queueId: string) => {
-    setCancelingId(queueId);
-    try {
-      await api.updateQueueJob(queueId, { status: "canceled" });
-      push({ title: "Queue canceled.", tone: "success" });
-      queueQuery.refetch();
-    } catch {
-      push({ title: "Cancel failed.", description: "Try again.", tone: "error" });
-    } finally {
-      setCancelingId(null);
-    }
-  };
-  const defaultModel = useMemo(
-    () => modelRows.find((model) => model.model_id === defaultId),
-    [modelRows, defaultId]
-  );
-  const defaultAccuracy =
-    defaultModel?.metrics?.logreg_acc ?? metricsQuery.data?.logreg_acc;
-  const defaultF1 = defaultModel?.metrics?.logreg_f1 ?? metricsQuery.data?.logreg_f1;
+  const latestModel = modelRows[0];
+  const latestAccuracy =
+    latestModel?.metrics?.logreg_acc ?? metricsQuery.data?.logreg_acc;
+  const latestF1 = latestModel?.metrics?.logreg_f1 ?? metricsQuery.data?.logreg_f1;
 
   return (
     <Card>
@@ -154,17 +129,17 @@ export default function ModelsPage() {
 
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-panelBorder bg-background p-3">
-          <p className="text-xs text-muted">Accuracy</p>
+          <p className="text-xs text-muted">Latest model accuracy</p>
           <p className="text-2xl font-semibold">
-            {typeof defaultAccuracy === "number"
-              ? `${(defaultAccuracy * 100).toFixed(1)}%`
+            {typeof latestAccuracy === "number"
+              ? `${(latestAccuracy * 100).toFixed(1)}%`
               : "--"}
           </p>
         </div>
         <div className="rounded-lg border border-panelBorder bg-background p-3">
-          <p className="text-xs text-muted">F1 Score</p>
+          <p className="text-xs text-muted">Latest model F1 score</p>
           <p className="text-2xl font-semibold">
-            {typeof defaultF1 === "number" ? defaultF1.toFixed(2) : "--"}
+            {typeof latestF1 === "number" ? latestF1.toFixed(2) : "--"}
           </p>
         </div>
       </div>
@@ -181,7 +156,6 @@ export default function ModelsPage() {
                 <TH>Accuracy</TH>
                 <TH>F1</TH>
                 <TH>Status</TH>
-                <TH>Actions</TH>
                 <TH></TH>
               </TR>
             </THead>
@@ -193,36 +167,28 @@ export default function ModelsPage() {
                   <TD>—</TD>
                   <TD>—</TD>
                   <TD>
-                    <div className="flex items-center gap-2">
-                      <Badge tone="neutral">
-                        {model.status === "failed"
-                          ? "Failed"
+                    <Badge
+                      className={
+                        model.status === "failed"
+                          ? "border-danger/50 bg-danger/15 text-danger"
                           : model.status === "canceled"
-                            ? "Canceled"
+                            ? "border-panelBorder bg-panel text-muted"
                             : model.status === "processing"
-                              ? "Processing"
-                              : "Queued"}
-                      </Badge>
+                              ? "border-sky-400/50 bg-sky-400/15 text-sky-300"
+                              : "border-amber-400/50 bg-amber-400/15 text-amber-300"
+                      }
+                    >
                       {["queued", "processing"].includes(model.status) && (
-                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted border-t-transparent" />
+                        <span className="mr-1 h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
                       )}
-                    </div>
-                  </TD>
-                  <TD>
-                    <div className="flex flex-wrap gap-2">
-                      {model.status === "queued" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => cancelJob(model.tempId)}
-                          disabled={cancelingId === model.tempId}
-                        >
-                          Cancel
-                        </Button>
-                      )}
-                      <Button variant="secondary" disabled>
-                        Set Default
-                      </Button>
-                    </div>
+                      {model.status === "failed"
+                        ? "Failed"
+                        : model.status === "canceled"
+                          ? "Canceled"
+                          : model.status === "processing"
+                            ? "Processing"
+                            : "Queued"}
+                    </Badge>
                   </TD>
                   <TD>
                     <span className="flex h-7 w-7 items-center justify-center rounded-full border border-panelBorder text-muted">
@@ -241,20 +207,10 @@ export default function ModelsPage() {
                     {model.model_id === defaultId ? (
                       <Badge tone="success">Default</Badge>
                     ) : (
-                      <Badge tone="neutral">Available</Badge>
+                      <Badge className="border-emerald-400/50 bg-emerald-400/15 text-emerald-300">
+                        Available
+                      </Badge>
                     )}
-                  </TD>
-                  <TD>
-                    <div className="flex flex-wrap gap-2">
-                      {model.model_id !== defaultId && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => setDefault(model.model_id)}
-                        >
-                          Set Default
-                        </Button>
-                      )}
-                    </div>
                   </TD>
                   <TD>
                     <Link

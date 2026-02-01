@@ -64,6 +64,13 @@ export default function PredictionsPage() {
   const [predictionType, setPredictionType] = useState<"single" | "batch">("single");
   const [isQueueingSingle, setIsQueueingSingle] = useState(false);
   const [isQueueingBatch, setIsQueueingBatch] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [activePrediction, setActivePrediction] = useState<any | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [deleteText, setDeleteText] = useState("");
+  const [updating, setUpdating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const modelsQuery = useQuery({
     queryKey: ["models"],
@@ -121,6 +128,52 @@ export default function PredictionsPage() {
       push({ title: "Cancel failed.", description: "Try again.", tone: "error" });
     } finally {
       setCancelingId(null);
+    }
+  };
+
+  const openEdit = (prediction: any) => {
+    setActivePrediction(prediction);
+    setEditLabel(prediction.label ?? "");
+    setEditOpen(true);
+  };
+
+  const openDelete = (prediction: any) => {
+    setActivePrediction(prediction);
+    setDeleteText("");
+    setDeleteOpen(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!activePrediction?.prediction_id) return;
+    setUpdating(true);
+    try {
+      await api.updatePrediction(activePrediction.prediction_id, { label: editLabel.trim() || null });
+      push({ title: "Prediction updated.", tone: "success" });
+      predictionsQuery.refetch();
+    } catch {
+      push({ title: "Update failed.", description: "Try again.", tone: "error" });
+    } finally {
+      setUpdating(false);
+      setEditOpen(false);
+      setActivePrediction(null);
+      setEditLabel("");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!activePrediction?.prediction_id) return;
+    setDeleting(true);
+    try {
+      await api.deletePrediction(activePrediction.prediction_id);
+      push({ title: "Prediction deleted.", tone: "success" });
+      predictionsQuery.refetch();
+    } catch {
+      push({ title: "Delete failed.", description: "Try again.", tone: "error" });
+    } finally {
+      setDeleting(false);
+      setDeleteOpen(false);
+      setActivePrediction(null);
+      setDeleteText("");
     }
   };
 
@@ -247,7 +300,21 @@ export default function PredictionsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="rounded-full border border-panelBorder bg-panel px-2 py-1 text-xs text-muted">
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
+                        item.status === "failed"
+                          ? "border-danger/50 bg-danger/15 text-danger"
+                          : item.status === "canceled"
+                            ? "border-panelBorder bg-panel text-muted"
+                            : item.status === "processing"
+                              ? "border-sky-400/50 bg-sky-400/15 text-sky-300"
+                              : "border-amber-400/50 bg-amber-400/15 text-amber-300"
+                      )}
+                    >
+                      {["queued", "processing"].includes(item.status) && (
+                        <span className="mr-1 h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                      )}
                       {item.status === "failed"
                         ? "Failed"
                         : item.status === "canceled"
@@ -270,19 +337,14 @@ export default function PredictionsPage() {
                 </div>
               </div>
             ) : (
-              <Link
+              <div
                 key={item.prediction_id}
-                href={
-                  item.payload?.mode === "batch"
-                    ? `/predictions/batch/${item.prediction_id}`
-                    : `/predictions/${item.prediction_id}`
-                }
                 className="rounded-xl border border-panelBorder bg-background p-4 transition hover:border-accent/60"
               >
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold">
-                      {item.payload?.mode === "single" ? "Single prediction" : "Batch prediction"}
+                      {item.label || (item.payload?.mode === "single" ? "Single prediction" : "Batch prediction")}
                     </p>
                     <p className="text-xs text-muted">
                       Model: {modelNameById.get(item.payload?.model_id) || "—"} ·{" "}
@@ -295,7 +357,33 @@ export default function PredictionsPage() {
                       : `Customer ${item.result?.customer_id ?? item.payload?.customer_id ?? "—"}`}
                   </p>
                 </div>
-              </Link>
+                <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    className="h-8 px-3 text-xs"
+                    onClick={() => openEdit(item)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="danger"
+                    className="h-8 px-3 text-xs"
+                    onClick={() => openDelete(item)}
+                  >
+                    Delete
+                  </Button>
+                  <Link
+                    href={
+                      item.payload?.mode === "batch"
+                        ? `/predictions/batch/${item.prediction_id}`
+                        : `/predictions/${item.prediction_id}`
+                    }
+                    className="inline-flex h-8 items-center justify-center rounded-md border border-panelBorder bg-panel px-3 text-xs font-medium text-text transition hover:border-accent/60"
+                  >
+                    View
+                  </Link>
+                </div>
+              </div>
             )
           ))}
         </div>
@@ -394,6 +482,109 @@ export default function PredictionsPage() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editOpen && activePrediction && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+          onClick={() => setEditOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-panelBorder bg-panel"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-panelBorder px-6 py-4">
+              <div>
+                <p className="text-xs uppercase text-muted">Prediction</p>
+                <h3 className="text-lg font-semibold">Update label</h3>
+              </div>
+              <Button
+                variant="ghost"
+                className="h-9 w-9 p-0"
+                onClick={() => setEditOpen(false)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </Button>
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="rounded-xl border border-panelBorder bg-background p-3">
+                <p className="text-xs text-muted">Prediction ID</p>
+                <p className="text-sm font-semibold">{activePrediction.prediction_id}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted">Label</p>
+                <Input
+                  value={editLabel}
+                  onChange={(event) => setEditLabel(event.target.value)}
+                  placeholder="Add a label"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-3">
+                <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={updating}>
+                  Cancel
+                </Button>
+                <Button variant="primary" onClick={handleUpdate} loading={updating}>
+                  Save changes
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteOpen && activePrediction && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+          onClick={() => setDeleteOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-panelBorder bg-panel"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-panelBorder px-6 py-4">
+              <div>
+                <p className="text-xs uppercase text-muted">Delete prediction</p>
+                <h3 className="text-lg font-semibold">Confirm deletion</h3>
+              </div>
+              <Button
+                variant="ghost"
+                className="h-9 w-9 p-0"
+                onClick={() => setDeleteOpen(false)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </Button>
+            </div>
+            <div className="space-y-4 p-6">
+              <div className="rounded-xl border border-panelBorder bg-background p-3">
+                <p className="text-xs text-muted">Prediction ID</p>
+                <p className="text-sm font-semibold">{activePrediction.prediction_id}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted">Type the prediction ID to confirm</p>
+                <Input
+                  value={deleteText}
+                  onChange={(event) => setDeleteText(event.target.value)}
+                  placeholder={activePrediction.prediction_id}
+                />
+              </div>
+              <div className="flex items-center justify-end gap-3">
+                <Button variant="secondary" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={handleDelete}
+                  disabled={deleteText.trim() !== activePrediction.prediction_id}
+                  loading={deleting}
+                >
+                  Delete prediction
+                </Button>
+              </div>
             </div>
           </div>
         </div>

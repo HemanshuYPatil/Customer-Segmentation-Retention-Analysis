@@ -18,7 +18,8 @@ import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
@@ -34,11 +35,16 @@ const nav = [
 export default function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [activeModal, setActiveModal] = useState<"account" | "settings" | null>(null);
+  const [activeModal, setActiveModal] = useState<"account" | "settings" | "feedback" | null>(null);
   const [settingsTab, setSettingsTab] = useState<
     "appearance" | "notifications" | "security" | "data"
   >("appearance");
   const [theme, setTheme] = useState("ocean");
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [feedbackTab, setFeedbackTab] = useState<"feedback" | "bug">("feedback");
+  const [feedbackTitle, setFeedbackTitle] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
   const logoRef = useRef<HTMLDivElement | null>(null);
@@ -107,6 +113,15 @@ export default function Sidebar() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("cs-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("cs-notifications");
+    setNotificationsEnabled(stored ? stored === "on" : true);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("cs-notifications", notificationsEnabled ? "on" : "off");
+  }, [notificationsEnabled]);
 
   useEffect(() => {
     if (!logoRef.current) return;
@@ -214,6 +229,15 @@ export default function Sidebar() {
             }}
           >
             Settings
+          </button>
+          <button
+            className="w-full rounded-md px-3 py-2 text-left text-muted hover:bg-panelBorder/50 hover:text-text"
+            onClick={() => {
+              setOpen(false);
+              setActiveModal("feedback");
+            }}
+          >
+            Feedback & bugs
           </button>
           <button
             onClick={() => signOut(auth)}
@@ -359,9 +383,41 @@ export default function Sidebar() {
                         </p>
                       </div>
                       <div className="rounded-xl border border-panelBorder bg-panel/60 p-3">
-                        <p className="text-xs text-muted">
-                          Configure notification rules in your admin console.
-                        </p>
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold">Notifications</p>
+                            <p className="text-xs text-muted">
+                              Enable real-time alerts for training and prediction activity.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setNotificationsEnabled((prev) => !prev)}
+                            className={cn(
+                              "relative inline-flex h-7 w-12 items-center rounded-full border transition",
+                              notificationsEnabled
+                                ? "border-emerald-400/60 bg-emerald-400/20"
+                                : "border-panelBorder bg-panel"
+                            )}
+                            aria-pressed={notificationsEnabled}
+                          >
+                            <span
+                              className={cn(
+                                "inline-flex h-5 w-5 transform items-center justify-center rounded-full bg-white text-[10px] font-semibold text-panel transition",
+                                notificationsEnabled ? "translate-x-6" : "translate-x-1"
+                              )}
+                            >
+                              {notificationsEnabled ? "On" : "Off"}
+                            </span>
+                          </button>
+                        </div>
+                        <div className="mt-3 rounded-lg border border-panelBorder bg-background p-3">
+                          <p className="text-xs text-muted">
+                            {notificationsEnabled
+                              ? "Notifications are enabled for this workspace."
+                              : "Notifications are muted. You can re-enable them anytime."}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -376,6 +432,9 @@ export default function Sidebar() {
                       </div>
                       <div className="rounded-xl border border-panelBorder bg-panel/60 p-3">
                         <p className="text-xs text-muted">
+                          Data is secured with encrypted transport and controlled access policies.
+                        </p>
+                        <p className="mt-2 text-xs text-muted">
                           Security policies are managed by your identity provider.
                         </p>
                       </div>
@@ -392,12 +451,122 @@ export default function Sidebar() {
                       </div>
                       <div className="rounded-xl border border-panelBorder bg-panel/60 p-3">
                         <p className="text-xs text-muted">
+                          Files are stored securely with SHA-256 encryption at rest.
+                        </p>
+                        <p className="mt-2 text-xs text-muted">
                           Storage settings are configured per tenant in the admin console.
                         </p>
                       </div>
                     </div>
                   )}
 
+                </div>
+              </div>
+            ) : activeModal === "feedback" ? (
+              <div className="grid max-h-[78vh] gap-5 overflow-y-auto p-7 md:grid-cols-[240px_1fr]">
+                <div className="space-y-2 rounded-2xl border border-panelBorder bg-background/80 p-3">
+                  <p className="px-2 text-[11px] uppercase tracking-[0.18em] text-muted">
+                    Submit
+                  </p>
+                  <button
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition",
+                      feedbackTab === "feedback"
+                        ? "bg-accentSoft text-text shadow-[0_10px_18px_rgba(0,0,0,0.18)]"
+                        : "text-muted hover:bg-panelBorder/60 hover:text-text"
+                    )}
+                    onClick={() => setFeedbackTab("feedback")}
+                  >
+                    Feedback
+                  </button>
+                  <button
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition",
+                      feedbackTab === "bug"
+                        ? "bg-accentSoft text-text shadow-[0_10px_18px_rgba(0,0,0,0.18)]"
+                        : "text-muted hover:bg-panelBorder/60 hover:text-text"
+                    )}
+                    onClick={() => setFeedbackTab("bug")}
+                  >
+                    Bug report
+                  </button>
+                </div>
+                <div className="rounded-2xl border border-panelBorder bg-background p-5">
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {feedbackTab === "feedback" ? "Product feedback" : "Bug report"}
+                    </p>
+                    <p className="text-xs text-muted">
+                      {feedbackTab === "feedback"
+                        ? "Tell us what you want to see next."
+                        : "Describe the issue and how to reproduce it."}
+                    </p>
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-xl border border-panelBorder bg-panel/60 p-3">
+                      <p className="text-xs text-muted">Title</p>
+                      <input
+                        className="mt-2 w-full rounded-lg border border-panelBorder bg-background px-3 py-2 text-sm text-text"
+                        value={feedbackTitle}
+                        onChange={(event) => setFeedbackTitle(event.target.value)}
+                        placeholder={
+                          feedbackTab === "feedback"
+                            ? "e.g. Add cohort export"
+                            : "e.g. Batch prediction download fails"
+                        }
+                      />
+                    </div>
+                    <div className="rounded-xl border border-panelBorder bg-panel/60 p-3">
+                      <p className="text-xs text-muted">Details</p>
+                      <textarea
+                        className="mt-2 min-h-[140px] w-full resize-none rounded-lg border border-panelBorder bg-background px-3 py-2 text-sm text-text"
+                        value={feedbackMessage}
+                        onChange={(event) => setFeedbackMessage(event.target.value)}
+                        placeholder={
+                          feedbackTab === "feedback"
+                            ? "What should we improve or add?"
+                            : "Steps to reproduce, expected vs actual behavior."
+                        }
+                      />
+                    </div>
+                    <div className="flex items-center justify-end gap-3">
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setFeedbackTitle("");
+                          setFeedbackMessage("");
+                        }}
+                        disabled={feedbackLoading}
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        onClick={async () => {
+                          if (!feedbackTitle.trim() || !feedbackMessage.trim()) return;
+                          setFeedbackLoading(true);
+                          try {
+                            await addDoc(collection(db, "feedback"), {
+                              type: feedbackTab === "feedback" ? "feedback" : "bug",
+                              title: feedbackTitle.trim(),
+                              message: feedbackMessage.trim(),
+                              user_id: user?.uid ?? null,
+                              user_email: user?.email ?? null,
+                              created_at: serverTimestamp()
+                            });
+                            setFeedbackTitle("");
+                            setFeedbackMessage("");
+                            closeModal();
+                          } finally {
+                            setFeedbackLoading(false);
+                          }
+                        }}
+                        disabled={!feedbackTitle.trim() || !feedbackMessage.trim() || feedbackLoading}
+                        loading={feedbackLoading}
+                      >
+                        Submit
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (

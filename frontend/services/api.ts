@@ -78,6 +78,10 @@ export const api = {
     request<{ path: string; columns: string[]; rows: Array<Record<string, unknown>> }>(
       `/models/${modelId}/dataset`
     ),
+  deleteModel: (modelId: string) =>
+    request<{ status: string; model_id: string }>(`/models/${modelId}`, {
+      method: "DELETE"
+    }),
   defaultModel: () => request<{ model_id: string | null }>("/models/default"),
   setDefaultModel: (modelId: string) =>
     request<{ status: string }>("/models/default", {
@@ -87,6 +91,15 @@ export const api = {
   predictions: () => request<Array<Record<string, unknown>>>("/predictions"),
   predictionDetail: (predictionId: string) =>
     request<Record<string, unknown>>(`/predictions/${predictionId}`),
+  updatePrediction: (predictionId: string, payload: { label?: string | null }) =>
+    request<{ status: string }>(`/predictions/${predictionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  deletePrediction: (predictionId: string) =>
+    request<{ status: string; prediction_id: string }>(`/predictions/${predictionId}`, {
+      method: "DELETE"
+    }),
   predictionDownload: (predictionId: string) =>
     request<{ url: string }>(`/predictions/${predictionId}/download`),
   predictionCsv: async (predictionId: string) => {

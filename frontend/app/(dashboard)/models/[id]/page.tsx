@@ -4,9 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { api } from "@/services/api";
 import { ChevronLeft, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useToast } from "@/components/ui/toast";
 
 function formatRelativeTime(value: any) {
   if (!value) return "--";
@@ -56,6 +58,10 @@ export default function ModelDetailPage() {
   const modelIdParam = (params as { id?: string | string[] })?.id;
   const modelId = Array.isArray(modelIdParam) ? modelIdParam[0] : modelIdParam;
   const [datasetOpen, setDatasetOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const { push } = useToast();
 
   const modelQuery = useQuery({
     queryKey: ["model-detail", modelId],
@@ -81,12 +87,37 @@ export default function ModelDetailPage() {
     return Object.entries(metrics).sort((a, b) => a[0].localeCompare(b[0]));
   }, [modelQuery.data]);
 
+  const modelName = modelQuery.data?.name ?? "";
+  const isDeleteMatch = deleteText.trim() === modelName;
+  const confirmDelete = async () => {
+    if (!modelId || !isDeleteMatch) return;
+    setDeleting(true);
+    try {
+      await api.deleteModel(modelId);
+      push({ title: "Model deleted.", tone: "success" });
+      router.push("/models");
+    } catch {
+      push({ title: "Delete failed.", description: "Try again.", tone: "error" });
+    } finally {
+      setDeleting(false);
+      setDeleteOpen(false);
+      setDeleteText("");
+    }
+  };
+
   return (
     <div className="grid gap-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" className="gap-2" onClick={() => router.back()}>
           <ChevronLeft size={16} />
           Back to models
+        </Button>
+        <Button
+          variant="danger"
+          onClick={() => setDeleteOpen(true)}
+          disabled={!modelId || modelQuery.isLoading}
+        >
+          Delete model
         </Button>
       </div>
 
@@ -228,6 +259,58 @@ export default function ModelDetailPage() {
               ) : (
                 <p className="text-sm text-muted">Dataset not available.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+          onClick={() => setDeleteOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-3xl border border-panelBorder bg-panel/95 shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-panelBorder px-7 py-5">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-muted">Delete model</p>
+                <h3 className="text-xl font-semibold">Confirm deletion</h3>
+                <p className="mt-1 text-xs text-muted">
+                  Type the model name to confirm. This action cannot be undone.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                className="h-9 w-9 rounded-full border border-panelBorder/60 p-0 hover:border-accent/60"
+                onClick={() => setDeleteOpen(false)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </Button>
+            </div>
+            <div className="space-y-4 px-7 py-6">
+              <div className="rounded-xl border border-panelBorder bg-background p-3">
+                <p className="text-xs text-muted">Model name</p>
+                <p className="mt-1 text-sm font-semibold">{modelName || "--"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted">Type the model name to confirm</p>
+                <Input
+                  value={deleteText}
+                  onChange={(event) => setDeleteText(event.target.value)}
+                  placeholder={modelName || "Model name"}
+                />
+              </div>
+              <div className="flex items-center justify-end gap-3">
+                <Button variant="secondary" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+                  Cancel
+                </Button>
+                <Button variant="danger" onClick={confirmDelete} disabled={!isDeleteMatch || deleting} loading={deleting}>
+                  Delete model
+                </Button>
+              </div>
             </div>
           </div>
         </div>
