@@ -320,12 +320,15 @@ def predictions(x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
 def create_queue_job(request: QueueJobRequest, x_tenant_id: Optional[str] = Header(None)) -> dict:
     if not x_tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant id")
+    if not request.kind:
+        raise HTTPException(status_code=400, detail="Missing kind")
     queue_id = request.queue_id or str(uuid.uuid4())
+    payload = request.payload or {}
     write_queue_job(
         tenant_id=x_tenant_id,
         queue_id=queue_id,
         kind=request.kind,
-        payload=request.payload,
+        payload=payload,
         status=request.status or "queued",
     )
     return {"queue_id": queue_id, "status": request.status or "queued"}
@@ -477,8 +480,8 @@ class PredictJobRequest(BaseModel):
 
 class QueueJobRequest(BaseModel):
     queue_id: Optional[str] = None
-    kind: str
-    payload: dict
+    kind: Optional[str] = None
+    payload: Optional[dict] = None
     status: Optional[str] = None
 
 
