@@ -108,7 +108,7 @@ def train_churn_models(
     logreg = LogisticRegression(max_iter=1000)
     logreg.fit(X_train, y_train)
     logreg_val_prob = logreg.predict_proba(X_val)[:, 1]
-    logreg_thresh, logreg_val_acc = _find_best_threshold(y_val.values, logreg_val_prob)
+    logreg_thresh, logreg_val_acc = _find_best_threshold(y_val, logreg_val_prob)
     logreg_test_prob = logreg.predict_proba(X_test)[:, 1]
     logreg_test_pred = (logreg_test_prob >= logreg_thresh).astype(int)
     logreg_f1 = f1_score(y_test, logreg_test_pred)
@@ -143,7 +143,7 @@ def train_churn_models(
         )
         model.fit(X_train, y_train)
         val_prob = model.predict_proba(X_val)[:, 1]
-        thresh, val_acc = _find_best_threshold(y_val.values, val_prob)
+        thresh, val_acc = _find_best_threshold(y_val, val_prob)
         if val_acc > best_xgb_val_acc:
             best_xgb = model
             best_xgb_thresh = thresh

@@ -89,6 +89,9 @@ def main() -> None:
                     pass
         mlflow.set_tracking_uri(f"file:{tracking_dir}")
     config = get_config()
+    if not os.getenv("MLFLOW_TRACKING_URI"):
+        tracking_db = paths.root / "mlflow.db"
+        mlflow.set_tracking_uri(f"sqlite:///{tracking_db}")
 
     paths.artifacts.mkdir(parents=True, exist_ok=True)
     paths.reports.mkdir(parents=True, exist_ok=True)
