@@ -25,7 +25,12 @@ from modeling import (
     train_segmentation,
 )
 from reporting import build_segment_summary, recommend_actions, write_strategic_report
-from firestore_client import write_training_metadata, write_segment_summary, write_model_registry
+from firestore_client import (
+    write_training_metadata,
+    write_segment_summary,
+    write_model_registry,
+    update_queue_job,
+)
 from notifications import build_training_complete_email
 from email_queue_client import enqueue_email_via_frontend
 
@@ -60,51 +65,55 @@ def main() -> None:
     parser.add_argument("--mapping-path", type=str, default=None)
     parser.add_argument("--tenant-id", type=str, default="local")
     parser.add_argument("--notify-email", type=str, default=None)
+    parser.add_argument("--queue-id", type=str, default=None)
     args = parser.parse_args()
 
-    paths = get_paths()
-    if not os.getenv("MLFLOW_TRACKING_URI"):
-        tracking_dir = paths.root / "mlruns"
-        tracking_dir.mkdir(parents=True, exist_ok=True)
-        # Clean malformed experiment dirs that can break FileStore listing.
-        for exp_dir in tracking_dir.iterdir():
-            if not exp_dir.is_dir():
-                continue
-            meta = exp_dir / "meta.yaml"
-            if not meta.exists():
-                try:
-                    for child in exp_dir.iterdir():
-                        if child.is_file():
-                            child.unlink()
-                        elif child.is_dir():
-                            for nested in child.rglob("*"):
-                                if nested.is_file():
-                                    nested.unlink()
-                            for nested in sorted(child.rglob("*"), reverse=True):
-                                if nested.is_dir():
-                                    nested.rmdir()
-                            child.rmdir()
-                    exp_dir.rmdir()
-                except Exception:
-                    pass
-        mlflow.set_tracking_uri(f"file:{tracking_dir}")
-    config = get_config()
-    if not os.getenv("MLFLOW_TRACKING_URI"):
-        tracking_db = paths.root / "mlflow.db"
-        mlflow.set_tracking_uri(f"sqlite:///{tracking_db}")
+    try:
+        paths = get_paths()
+        if not os.getenv("MLFLOW_TRACKING_URI"):
+            tracking_dir = paths.root / "mlruns"
+            tracking_dir.mkdir(parents=True, exist_ok=True)
+            # Clean malformed experiment dirs that can break FileStore listing.
+            for exp_dir in tracking_dir.iterdir():
+                if not exp_dir.is_dir():
+                    continue
+                meta = exp_dir / "meta.yaml"
+                if not meta.exists():
+                    try:
+                        for child in exp_dir.iterdir():
+                            if child.is_file():
+                                child.unlink()
+                            elif child.is_dir():
+                                for nested in child.rglob("*"):
+                                    if nested.is_file():
+                                        nested.unlink()
+                                for nested in sorted(child.rglob("*"), reverse=True):
+                                    if nested.is_dir():
+                                        nested.rmdir()
+                                child.rmdir()
+                        exp_dir.rmdir()
+                    except Exception:
+                        pass
+            mlflow.set_tracking_uri(f"file:{tracking_dir}")
+        config = get_config()
+        if not os.getenv("MLFLOW_TRACKING_URI"):
+            tracking_db = paths.root / "mlflow.db"
+            mlflow.set_tracking_uri(f"sqlite:///{tracking_db}")
 
-    paths.artifacts.mkdir(parents=True, exist_ok=True)
-    paths.reports.mkdir(parents=True, exist_ok=True)
+        paths.artifacts.mkdir(parents=True, exist_ok=True)
+        paths.reports.mkdir(parents=True, exist_ok=True)
 
-    data_file = Path(args.data_path) if args.data_path else config.data_file
-    if args.data_path:
-        data_file = _resolve_b2_input(args.data_path, args.tenant_id, "dataset")
-    df_raw = load_raw_transactions(str(data_file))
-    if args.mapping_path:
-        mapping_path = _resolve_b2_input(args.mapping_path, args.tenant_id, "mapping")
-        mapping = _load_mapping(mapping_path)
-        df_raw = standardize_columns(df_raw, mapping)
-    df = clean_transactions(df_raw)
+        data_file = Path(args.data_path) if args.data_path else config.data_file
+        if args.queue_id:
+            update_queue_job(args.tenant_id, args.queue_id, {"status": "processing"})
+        if args.data_path:
+            data_file = _resolve_b2_input(args.data_path, args.tenant_id, "dataset")
+        df_raw = load_raw_transactions(str(data_file))
+        if args.mapping_path:
+            mapping_path = _resolve_b2_input(args.mapping_path, args.tenant_id, "mapping")
+            mapping = _load_mapping(mapping_path)
+            df_raw = standardize_columns(df_raw, mapping)
+        df = clean_transactions(df_raw)
 
     snapshot_date = df["InvoiceDate"].max() + pd.Timedelta(days=1)
     rfm = build_rfm_features(df, snapshot_date)
@@ -243,6 +252,12 @@ def main() -> None:
             run_id=run_id,
             summary_rows=segment_summary.to_dict(orient="records"),
         )
+        if args.queue_id:
+            update_queue_job(
+                args.tenant_id,
+                args.queue_id,
+                {"status": "completed", "result": {"model_id": run_id, "model_name": model_name}},
+            )
         if args.notify_email:
             subject, text, html = build_training_complete_email(
                 tenant_id=args.tenant_id,
@@ -262,6 +277,10 @@ def main() -> None:
                 )
             except Exception as exc:
                 print(f"[email] queue failed: {exc}")
+    except Exception as exc:
+        if args.queue_id:
+            update_queue_job(args.tenant_id, args.queue_id, {"status": "failed", "error": str(exc)})
+        raise
 
 
 if __name__ == "__main__":

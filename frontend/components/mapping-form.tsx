@@ -133,21 +133,14 @@ export default function MappingForm() {
     setLoading(true);
     try {
       const upload = await api.uploadDataset(user.uid, fileRef, mapping);
+      const safeName = datasetLabel?.trim() || "New model";
       await api.retrain({
         tenant_id: user.uid,
         dataset_path: upload.dataset_path,
         mapping_path: upload.mapping_path,
-        notify_email: user.email
+        notify_email: user.email,
+        model_label: safeName
       });
-      const pending = JSON.parse(
-        window.localStorage.getItem("pending-models") ?? "[]"
-      ) as Array<{ tempId: string; name: string; createdAt: number }>;
-      const safeName = datasetLabel?.trim() || "New model";
-      const next = [
-        { tempId: `queued-${Date.now()}`, name: safeName, createdAt: Date.now() },
-        ...pending
-      ];
-      window.localStorage.setItem("pending-models", JSON.stringify(next));
       push({
         title: "Training queued.",
         description: "We will email you when the model is ready.",

@@ -27,6 +27,9 @@ from firestore_client import (
     get_prediction,
     set_default_model,
     get_default_model,
+    write_queue_job,
+    update_queue_job,
+    list_queue_jobs,
 )
 from storage import get_b2_client, download_file, presign_download_url, parse_b2_url
 from notifications import build_prediction_complete_email
@@ -81,6 +84,7 @@ class TrainRequest(BaseModel):
     dataset_path: str
     mapping_path: Optional[str] = None
     notify_email: Optional[str] = None
+    queue_id: Optional[str] = None
 
 
 app = FastAPI(title="Customer Segmentation & Retention API")
@@ -102,6 +106,17 @@ def _action_for_segment(summary: pd.DataFrame, segment: int) -> str:
     if row.empty:
         return "General nurture"
     return row.iloc[0]["recommended_action"]
+
+
+def _scale_segment_features(scaler, kmeans, segment_features):
+    # Ensure dtype matches the fitted KMeans centers to avoid sklearn dtype mismatch errors.
+    target_dtype = getattr(kmeans, "cluster_centers_", None)
+    if target_dtype is not None:
+        target_dtype = target_dtype.dtype
+    else:
+        target_dtype = "float64"
+    scaled = scaler.transform(segment_features)
+    return scaled.astype(target_dtype, copy=False)
 
 
 @app.get("/health")
@@ -168,6 +183,8 @@ def train(request: TrainRequest) -> dict:
     ]
     if request.mapping_path:
         args += ["--mapping-path", request.mapping_path]
+    if request.queue_id:
+        args += ["--queue-id", request.queue_id]
     if request.notify_email:
         args += ["--notify-email", request.notify_email]
     subprocess.Popen(args, cwd=str(ROOT))
@@ -299,6 +316,50 @@ def predictions(x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
     return list_predictions(x_tenant_id)
 
 
+@app.post("/queue")
+def create_queue_job(request: QueueJobRequest, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    queue_id = request.queue_id or str(uuid.uuid4())
+    write_queue_job(
+        tenant_id=x_tenant_id,
+        queue_id=queue_id,
+        kind=request.kind,
+        payload=request.payload,
+        status=request.status or "queued",
+    )
+    return {"queue_id": queue_id, "status": request.status or "queued"}
+
+
+@app.get("/queue")
+def list_queue(kind: Optional[str] = None, status: Optional[str] = None, x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    items = list_queue_jobs(x_tenant_id, kind=kind)
+    if status == "active":
+        active = {"queued", "processing"}
+        return [item for item in items if item.get("status") in active]
+    if status:
+        return [item for item in items if item.get("status") == status]
+    return items
+
+
+@app.patch("/queue/{queue_id}")
+def update_queue(queue_id: str, request: QueueJobUpdate, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    updates: dict = {}
+    if request.status:
+        updates["status"] = request.status
+    if request.result is not None:
+        updates["result"] = request.result
+    if request.error:
+        updates["error"] = request.error
+    if updates:
+        update_queue_job(x_tenant_id, queue_id, updates)
+    return {"status": "ok"}
+
+
 @app.get("/predictions/{prediction_id}")
 def prediction_detail(prediction_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
     if not x_tenant_id:
@@ -387,8 +448,9 @@ def predict(request: PredictRequest, x_tenant_id: Optional[str] = Header(None)) 
         features = row[FEATURE_COLS]
         customer_id = int(request.customer_id)
 
-    segment_features = features[SEGMENT_COLS].to_numpy(dtype="float64", copy=False)
-    segment = int(kmeans.predict(scaler.transform(segment_features))[0])
+    segment_features = features[SEGMENT_COLS].astype("float64", copy=False)
+    scaled_features = _scale_segment_features(scaler, kmeans, segment_features)
+    segment = int(kmeans.predict(scaled_features)[0])
     churn_prob = float(churn_model.predict_proba(features[FEATURE_COLS])[:, 1][0])
     ltv_pred = float(ltv_model.predict(features[FEATURE_COLS])[0])
 
@@ -410,6 +472,20 @@ class PredictJobRequest(BaseModel):
     customer_id: Optional[int] = None
     features: Optional[FeaturePayload] = None
     notify_email: Optional[str] = None
+    queue_id: Optional[str] = None
+
+
+class QueueJobRequest(BaseModel):
+    queue_id: Optional[str] = None
+    kind: str
+    payload: dict
+    status: Optional[str] = None
+
+
+class QueueJobUpdate(BaseModel):
+    status: Optional[str] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
 
 
 def _load_artifacts_for_model(tenant_id: str, model_id: str) -> dict:
@@ -461,115 +537,140 @@ def predict_job(request: PredictJobRequest) -> dict:
     summary = bundle["segment_summary"]
     store = bundle["feature_store"]
 
-    prediction_id = str(uuid.uuid4())
+    prediction_id = request.queue_id or str(uuid.uuid4())
+    if request.queue_id:
+        update_queue_job(request.tenant_id, request.queue_id, {"status": "processing"})
 
-    if request.mode == "single":
-        if request.features is None and request.customer_id is None:
-            raise HTTPException(status_code=400, detail="Provide customer_id or features")
-        if request.features is not None:
-            features = pd.DataFrame([request.features.dict()])
-            customer_id = request.customer_id
-        else:
-            row = store[store["CustomerID"] == request.customer_id]
-            if row.empty:
-                raise HTTPException(status_code=404, detail="Customer not found")
-            features = row[FEATURE_COLS]
-            customer_id = int(request.customer_id)
+    try:
+        if request.mode == "single":
+            if request.features is None and request.customer_id is None:
+                raise HTTPException(status_code=400, detail="Provide customer_id or features")
+            if request.features is not None:
+                features = pd.DataFrame([request.features.dict()])
+                customer_id = request.customer_id
+            else:
+                row = store[store["CustomerID"] == request.customer_id]
+                if row.empty:
+                    raise HTTPException(status_code=404, detail="Customer not found")
+                features = row[FEATURE_COLS]
+                customer_id = int(request.customer_id)
 
-        segment_features = features[SEGMENT_COLS].to_numpy(dtype="float64", copy=False)
-        segment = int(kmeans.predict(scaler.transform(segment_features))[0])
-        churn_prob = float(churn_model.predict_proba(features[FEATURE_COLS])[:, 1][0])
-        ltv_pred = float(ltv_model.predict(features[FEATURE_COLS])[0])
-        action = _action_for_segment(summary, segment)
+            segment_features = features[SEGMENT_COLS].astype("float64", copy=False)
+            scaled_features = _scale_segment_features(scaler, kmeans, segment_features)
+            segment = int(kmeans.predict(scaled_features)[0])
+            churn_prob = float(churn_model.predict_proba(features[FEATURE_COLS])[:, 1][0])
+            ltv_pred = float(ltv_model.predict(features[FEATURE_COLS])[0])
+            action = _action_for_segment(summary, segment)
 
-        result = {
-            "customer_id": customer_id,
-            "segment": segment,
-            "churn_probability": churn_prob,
-            "ltv_estimate": ltv_pred,
-            "recommended_action": action,
-        }
-        write_prediction(
-            tenant_id=request.tenant_id,
-            prediction_id=prediction_id,
-            payload=request.dict(),
-            result=result,
-        )
-        if request.notify_email:
-            subject, text, html = build_prediction_complete_email(
+            result = {
+                "customer_id": customer_id,
+                "segment": segment,
+                "churn_probability": churn_prob,
+                "ltv_estimate": ltv_pred,
+                "recommended_action": action,
+            }
+            write_prediction(
                 tenant_id=request.tenant_id,
                 prediction_id=prediction_id,
-                mode="single",
+                payload=request.dict(),
+                result=result,
             )
-            try:
-                enqueue_email_via_frontend(
-                    to_email=request.notify_email,
-                    subject=subject,
-                    html=html,
-                    text=text,
-                    metadata={"type": "prediction_complete", "tenant_id": request.tenant_id},
-                    event_id=f"prediction-email-{prediction_id}",
+            if request.queue_id:
+                update_queue_job(
+                    request.tenant_id,
+                    request.queue_id,
+                    {"status": "completed", "result": {"prediction_id": prediction_id}},
                 )
-            except Exception as exc:
-                print(f"[email] queue failed: {exc}")
-        return {"status": "completed", "prediction_id": prediction_id}
+            if request.notify_email:
+                subject, text, html = build_prediction_complete_email(
+                    tenant_id=request.tenant_id,
+                    prediction_id=prediction_id,
+                    mode="single",
+                )
+                try:
+                    enqueue_email_via_frontend(
+                        to_email=request.notify_email,
+                        subject=subject,
+                        html=html,
+                        text=text,
+                        metadata={"type": "prediction_complete", "tenant_id": request.tenant_id},
+                        event_id=f"prediction-email-{prediction_id}",
+                    )
+                except Exception as exc:
+                    print(f"[email] queue failed: {exc}")
+            return {"status": "completed", "prediction_id": prediction_id}
 
-    if request.mode == "batch":
-        features = store[FEATURE_COLS]
-        segment_features = store[SEGMENT_COLS].to_numpy(dtype="float64", copy=False)
-        segments = kmeans.predict(scaler.transform(segment_features))
-        churn_probs = churn_model.predict_proba(features)[:, 1]
-        ltv_preds = ltv_model.predict(features)
-        results = store[["CustomerID"]].copy()
-        results["segment"] = segments
-        results["churn_probability"] = churn_probs
-        results["ltv_estimate"] = ltv_preds
-        results["recommended_action"] = results["segment"].apply(lambda s: _action_for_segment(summary, int(s)))
+        if request.mode == "batch":
+            features = store[FEATURE_COLS]
+            segment_features = store[SEGMENT_COLS].astype("float64", copy=False)
+            scaled_features = _scale_segment_features(scaler, kmeans, segment_features)
+            segments = kmeans.predict(scaled_features)
+            churn_probs = churn_model.predict_proba(features)[:, 1]
+            ltv_preds = ltv_model.predict(features)
+            results = store[["CustomerID"]].copy()
+            results["segment"] = segments
+            results["churn_probability"] = churn_probs
+            results["ltv_estimate"] = ltv_preds
+            results["recommended_action"] = results["segment"].apply(lambda s: _action_for_segment(summary, int(s)))
 
-        # Hybrid storage: store sample rows in Firestore + full CSV in B2
-        batch_file_url = None
-        sample_size = 200
-        result_payload = {
-            "count": int(len(results)),
-            "rows": results.head(sample_size).to_dict(orient="records"),
-            "sample_size": sample_size,
-        }
-        b2_bucket = os.getenv("B2_BUCKET")
-        client = get_b2_client()
-        if client and b2_bucket:
-            output_key = f"tenants/{request.tenant_id}/outputs/{prediction_id}.csv"
-            temp_path = ROOT / "artifacts_cache" / request.tenant_id / f"{prediction_id}.csv"
-            temp_path.parent.mkdir(parents=True, exist_ok=True)
-            results.to_csv(temp_path, index=False)
-            client.upload_file(str(temp_path), b2_bucket, output_key)
-            batch_file_url = f"b2://{b2_bucket}/{output_key}"
+            # Hybrid storage: store sample rows in Firestore + full CSV in B2
+            batch_file_url = None
+            sample_size = 200
+            result_payload = {
+                "count": int(len(results)),
+                "rows": results.head(sample_size).to_dict(orient="records"),
+                "sample_size": sample_size,
+            }
+            b2_bucket = os.getenv("B2_BUCKET")
+            client = get_b2_client()
+            if client and b2_bucket:
+                output_key = f"tenants/{request.tenant_id}/outputs/{prediction_id}.csv"
+                temp_path = ROOT / "artifacts_cache" / request.tenant_id / f"{prediction_id}.csv"
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
+                results.to_csv(temp_path, index=False)
+                client.upload_file(str(temp_path), b2_bucket, output_key)
+                batch_file_url = f"b2://{b2_bucket}/{output_key}"
 
-        write_prediction(
-            tenant_id=request.tenant_id,
-            prediction_id=prediction_id,
-            payload=request.dict(),
-            result=result_payload,
-            batch_file_url=batch_file_url,
-        )
-        if request.notify_email:
-            subject, text, html = build_prediction_complete_email(
+            write_prediction(
                 tenant_id=request.tenant_id,
                 prediction_id=prediction_id,
-                mode="batch",
+                payload=request.dict(),
+                result=result_payload,
                 batch_file_url=batch_file_url,
-                count=int(len(results)),
             )
-            try:
-                enqueue_email_via_frontend(
-                    to_email=request.notify_email,
-                    subject=subject,
-                    html=html,
-                    text=text,
-                    metadata={"type": "prediction_complete", "tenant_id": request.tenant_id},
-                    event_id=f"prediction-email-{prediction_id}",
+            if request.queue_id:
+                update_queue_job(
+                    request.tenant_id,
+                    request.queue_id,
+                    {"status": "completed", "result": {"prediction_id": prediction_id}},
                 )
-            except Exception as exc:
-                print(f"[email] queue failed: {exc}")
-        return {"status": "completed", "prediction_id": prediction_id}
+            if request.notify_email:
+                subject, text, html = build_prediction_complete_email(
+                    tenant_id=request.tenant_id,
+                    prediction_id=prediction_id,
+                    mode="batch",
+                    batch_file_url=batch_file_url,
+                    count=int(len(results)),
+                )
+                try:
+                    enqueue_email_via_frontend(
+                        to_email=request.notify_email,
+                        subject=subject,
+                        html=html,
+                        text=text,
+                        metadata={"type": "prediction_complete", "tenant_id": request.tenant_id},
+                        event_id=f"prediction-email-{prediction_id}",
+                    )
+                except Exception as exc:
+                    print(f"[email] queue failed: {exc}")
+            return {"status": "completed", "prediction_id": prediction_id}
 
-    raise HTTPException(status_code=400, detail="Invalid mode")
+        raise HTTPException(status_code=400, detail="Invalid mode")
+    except Exception as exc:
+        if request.queue_id:
+            update_queue_job(
+                request.tenant_id,
+                request.queue_id,
+                {"status": "failed", "error": str(exc)},
+            )
+        raise

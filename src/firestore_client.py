@@ -139,6 +139,61 @@ def write_prediction(
     db.collection("tenants").document(tenant_id).collection("predictions").document(prediction_id).set(data)
 
 
+def write_queue_job(
+    tenant_id: str,
+    queue_id: str,
+    kind: str,
+    payload: Dict[str, Any],
+    status: str = "queued",
+    result: Optional[Dict[str, Any]] = None,
+) -> None:
+    db = get_firestore()
+    if db is None:
+        return
+    data: Dict[str, Any] = {
+        "queue_id": queue_id,
+        "kind": kind,
+        "status": status,
+        "payload": payload,
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    if result is not None:
+        data["result"] = result
+    db.collection("tenants").document(tenant_id).collection("queue_jobs").document(queue_id).set(data)
+
+
+def update_queue_job(tenant_id: str, queue_id: str, updates: Dict[str, Any]) -> None:
+    db = get_firestore()
+    if db is None:
+        return
+    payload = {**updates, "updated_at": firestore.SERVER_TIMESTAMP}
+    db.collection("tenants").document(tenant_id).collection("queue_jobs").document(queue_id).set(payload, merge=True)
+
+
+def list_queue_jobs(tenant_id: str, kind: Optional[str] = None, limit: int = 200) -> list[dict]:
+    db = get_firestore()
+    if db is None:
+        return []
+    docs = db.collection("tenants").document(tenant_id).collection("queue_jobs").stream()
+    items = [doc.to_dict() for doc in docs]
+    if kind:
+        items = [item for item in items if item.get("kind") == kind]
+
+    def _created_at_ms(value: Any) -> int:
+        if value is None:
+            return 0
+        if hasattr(value, "timestamp"):
+            try:
+                return int(value.timestamp() * 1000)
+            except Exception:
+                return 0
+        return 0
+
+    items.sort(key=lambda item: _created_at_ms(item.get("created_at")), reverse=True)
+    return items[:limit]
+
+
 def list_models(tenant_id: str) -> list[dict]:
     db = get_firestore()
     if db is None:

@@ -92,7 +92,7 @@ export default function ModelDetailPage() {
 
         <Card>
           <CardTitle>Model Details</CardTitle>
-          <CardDescription>Full record pulled from Firestore and stored artifacts.</CardDescription>
+          <CardDescription>Model metadata and stored artifacts.</CardDescription>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
           <div className="rounded-xl border border-panelBorder bg-background p-3">
             <p className="text-xs text-muted">Model name</p>
@@ -154,30 +154,22 @@ export default function ModelDetailPage() {
         </Card>
 
         <Card className="flex flex-col">
-          <CardTitle>Raw Firestore Record</CardTitle>
-          <CardDescription>Full document payload from Firestore.</CardDescription>
+          <CardTitle>JSON Artifacts</CardTitle>
+          <CardDescription>Stored JSON files for this model.</CardDescription>
           <div className="mt-4 flex-1 rounded-xl border border-panelBorder bg-background p-3">
-            <pre className="no-scrollbar h-full min-h-[18rem] overflow-auto rounded-lg bg-panel/60 p-3 text-xs text-muted">
-              {JSON.stringify(modelQuery.data ?? {}, null, 2)}
-            </pre>
+            {jsonQuery.data ? (
+              <div className="h-full">
+                <p className="text-xs text-muted">{jsonQuery.data.filename}</p>
+                <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-panel/60 p-3 text-xs text-muted">
+                  {JSON.stringify(jsonQuery.data.data, null, 2)}
+                </pre>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">No JSON artifacts available.</p>
+            )}
           </div>
         </Card>
       </div>
-
-      {jsonQuery.data && (
-        <Card>
-          <CardTitle>JSON Artifacts</CardTitle>
-          <CardDescription>Displays stored JSON files if available.</CardDescription>
-          <div className="mt-4">
-            <div className="rounded-xl border border-panelBorder bg-background p-3">
-              <p className="text-xs text-muted">{jsonQuery.data.filename}</p>
-              <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-panel/60 p-3 text-xs text-muted">
-                {JSON.stringify(jsonQuery.data.data, null, 2)}
-              </pre>
-            </div>
-          </div>
-        </Card>
-      )}
 
       {datasetOpen && (
         <div

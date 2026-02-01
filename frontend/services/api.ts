@@ -98,7 +98,7 @@ export const api = {
       }
     });
   },
-  retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string; notify_email?: string | null }) => {
+  retrain: async (payload: { tenant_id: string; dataset_path: string; mapping_path?: string; notify_email?: string | null; model_label?: string }) => {
     const res = await fetch("/api/queue/train", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -151,5 +151,15 @@ export const api = {
       throw new Error("Failed to queue batch prediction");
     }
     return res.json();
-  }
+  },
+  queueJobs: (kind: string, status?: string) => {
+    const params = new URLSearchParams({ kind });
+    if (status) params.set("status", status);
+    return request<Array<Record<string, unknown>>>(`/queue?${params.toString()}`);
+  },
+  updateQueueJob: (queueId: string, payload: { status?: string; result?: Record<string, unknown>; error?: string }) =>
+    request<{ status: string }>(`/queue/${queueId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    })
 };

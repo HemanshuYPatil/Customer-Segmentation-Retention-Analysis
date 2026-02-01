@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { api } from "@/services/api";
@@ -64,10 +64,6 @@ export default function PredictionsPage() {
   const [predictionType, setPredictionType] = useState<"single" | "batch">("single");
   const [isQueueingSingle, setIsQueueingSingle] = useState(false);
   const [isQueueingBatch, setIsQueueingBatch] = useState(false);
-  const [pendingBatches, setPendingBatches] = useState<
-    Array<{ tempId: string; modelId: string; createdAt: number; mode: "single" | "batch" }>
-  >([]);
-  const prevBatchCountRef = useRef(0);
 
   const modelsQuery = useQuery({
     queryKey: ["models"],
@@ -81,10 +77,11 @@ export default function PredictionsPage() {
     refetchInterval: 5000
   });
 
-  const serverBatches = useMemo(() => {
-    const items = predictionsQuery.data ?? [];
-    return items.filter((item: any) => item.payload?.mode === "batch");
-  }, [predictionsQuery.data]);
+  const queueQuery = useQuery({
+    queryKey: ["queue", "prediction"],
+    queryFn: () => api.queueJobs("prediction"),
+    refetchInterval: 5000
+  });
 
   const modelNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -94,26 +91,38 @@ export default function PredictionsPage() {
     return map;
   }, [modelsQuery.data]);
 
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const queuedPredictions = useMemo(() => {
+    const visible = new Set(["queued", "processing", "failed", "canceled"]);
+    return (queueQuery.data ?? [])
+      .filter((job: any) => visible.has(job.status))
+      .map((job: any) => ({
+        prediction_id: job.queue_id,
+        payload: job.payload,
+        created_at: job.created_at,
+        status: job.status || "queued",
+        isQueued: true
+      }));
+  }, [queueQuery.data]);
+
   const predictions = useMemo(() => {
-    const queued = pendingBatches.map((item) => ({
-      prediction_id: item.tempId,
-      payload: { model_id: item.modelId, mode: item.mode },
-      created_at: new Date(item.createdAt).toISOString(),
-      isQueued: true
-    }));
-    return [...queued, ...(predictionsQuery.data ?? [])];
-  }, [pendingBatches, predictionsQuery.data]);
+    return [...queuedPredictions, ...(predictionsQuery.data ?? [])];
+  }, [queuedPredictions, predictionsQuery.data]);
 
-  const queuedCount = pendingBatches.length;
+  const queuedCount = queuedPredictions.length;
 
-  useEffect(() => {
-    const serverCount = serverBatches.length;
-    const delta = serverCount - prevBatchCountRef.current;
-    if (delta > 0 && pendingBatches.length) {
-      setPendingBatches((prev) => prev.slice(Math.min(delta, prev.length)));
+  const cancelJob = async (queueId: string) => {
+    setCancelingId(queueId);
+    try {
+      await api.updateQueueJob(queueId, { status: "canceled" });
+      push({ title: "Queue canceled.", tone: "success" });
+      queueQuery.refetch();
+    } catch {
+      push({ title: "Cancel failed.", description: "Try again.", tone: "error" });
+    } finally {
+      setCancelingId(null);
     }
-    prevBatchCountRef.current = serverCount;
-  }, [serverBatches.length, pendingBatches.length]);
+  };
 
   const runSingle = async () => {
     if (!user) {
@@ -142,10 +151,6 @@ export default function PredictionsPage() {
         description: "We will email you when the result is ready.",
         tone: "success"
       });
-      setPendingBatches((prev) => [
-        { tempId: `queued-${Date.now()}-single`, modelId: selectedModel, createdAt: Date.now(), mode: "single" },
-        ...prev
-      ]);
       setCustomerId("");
       setIsCreateOpen(false);
     } catch (err) {
@@ -175,10 +180,6 @@ export default function PredictionsPage() {
         model_id: selectedModel,
         notify_email: user.email
       });
-      setPendingBatches((prev) => [
-        { tempId: `queued-${Date.now()}-batch`, modelId: selectedModel, createdAt: Date.now(), mode: "batch" },
-        ...prev
-      ]);
       push({
         title: "Batch prediction queued.",
         description: "We will email you when the file is ready.",
@@ -245,9 +246,27 @@ export default function PredictionsPage() {
                       {formatRelativeTime(item.created_at)}
                     </p>
                   </div>
-                  <span className="rounded-full border border-panelBorder bg-panel px-2 py-1 text-xs text-muted">
-                    Queued
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full border border-panelBorder bg-panel px-2 py-1 text-xs text-muted">
+                      {item.status === "failed"
+                        ? "Failed"
+                        : item.status === "canceled"
+                          ? "Canceled"
+                          : item.status === "processing"
+                            ? "Processing"
+                            : "Queued"}
+                    </span>
+                    {item.status === "queued" && (
+                      <Button
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => cancelJob(item.prediction_id)}
+                        disabled={cancelingId === item.prediction_id}
+                      >
+                        Cancel
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : (
