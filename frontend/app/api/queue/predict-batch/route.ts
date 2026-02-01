@@ -3,7 +3,15 @@ import { inngest } from "@/inngest/client";
 import { getApiBaseUrl } from "@/lib/api-base";
 
 export async function POST(request: NextRequest) {
-  const payload = await request.json();
+  let payload: any = null;
+  try {
+    payload = await request.json();
+  } catch {
+    return NextResponse.json({ detail: "Invalid JSON body" }, { status: 400 });
+  }
+  if (!payload?.tenant_id || !payload?.model_id) {
+    return NextResponse.json({ detail: "Missing tenant_id or model_id" }, { status: 400 });
+  }
   const apiBase = getApiBaseUrl();
   const queueId = payload.queue_id ?? crypto.randomUUID();
   const queueRes = await fetch(`${apiBase}/queue`, {

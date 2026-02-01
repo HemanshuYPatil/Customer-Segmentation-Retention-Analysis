@@ -10,7 +10,9 @@ import os
 import joblib
 import pandas as pd
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header, Body, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -89,6 +91,12 @@ class TrainRequest(BaseModel):
 
 app = FastAPI(title="Customer Segmentation & Retention API")
 load_dotenv()
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    print(f"[validation] {request.method} {request.url.path} - {exc.errors()}")
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 # CORS for local Next.js + production frontend
 origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
@@ -317,9 +325,14 @@ def predictions(x_tenant_id: Optional[str] = Header(None)) -> list[dict]:
 
 
 @app.post("/queue")
-def create_queue_job(request: QueueJobRequest, x_tenant_id: Optional[str] = Header(None)) -> dict:
+def create_queue_job(
+    request: Optional[QueueJobRequest] = Body(default=None),
+    x_tenant_id: Optional[str] = Header(None),
+) -> dict:
     if not x_tenant_id:
         raise HTTPException(status_code=400, detail="Missing tenant id")
+    if request is None:
+        raise HTTPException(status_code=400, detail="Missing request body")
     if not request.kind:
         raise HTTPException(status_code=400, detail="Missing kind")
     queue_id = request.queue_id or str(uuid.uuid4())
