@@ -2,19 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-from typing import Optional
+from typing import Optional, Iterator
 import uuid
 import subprocess
 import os
+import io
+import gc
 
 import joblib
 import pandas as pd
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header, BackgroundTasks
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 import json
+import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 from firestore_client import (
@@ -33,6 +36,11 @@ from storage import get_b2_client, download_file, presign_download_url, parse_b2
 from notifications import build_prediction_complete_email
 from email_queue_client import enqueue_email_via_frontend
 from pydantic import BaseModel, Field
+from config import get_config
+from data_pipeline import clean_transactions, load_raw_transactions, standardize_columns
+from features import build_rfm_features, build_time_split_features
+from modeling import train_churn_models, train_ltv_model, train_segmentation
+from reporting import build_segment_summary, recommend_actions
 
 ARTIFACTS = ROOT / "artifacts"
 
@@ -188,6 +196,87 @@ def train(request: TrainRequest) -> dict:
         args += ["--notify-email", request.notify_email]
     subprocess.Popen(args, cwd=str(ROOT))
     return {"status": "started", "job_id": job_id}
+
+
+@app.post("/train/download")
+def train_and_download(request: TrainRequest, background_tasks: BackgroundTasks) -> StreamingResponse:
+    config = get_config()
+
+    df_raw = _load_transactions(request.dataset_path)
+    if request.mapping_path:
+        mapping = _load_mapping(request.mapping_path)
+        df_raw = standardize_columns(df_raw, mapping)
+    df = clean_transactions(df_raw)
+
+    snapshot_date = df["InvoiceDate"].max() + pd.Timedelta(days=1)
+    rfm = build_rfm_features(df, snapshot_date)
+
+    cutoff_date = df["InvoiceDate"].max() - pd.Timedelta(days=config.holdout_days)
+    modeling_df = build_time_split_features(
+        df,
+        cutoff_date=cutoff_date,
+        churn_window_days=config.churn_window_days,
+        ltv_horizon_days=config.ltv_horizon_days,
+    )
+    modeling_df = modeling_df[modeling_df["frequency"] >= config.min_transactions].copy()
+
+    scaler, kmeans, segmented_df, k_scores = train_segmentation(
+        rfm, config.random_state, config.k_range
+    )
+    churn_logreg, churn_xgb, churn_metrics = train_churn_models(
+        modeling_df, config.random_state
+    )
+    ltv_xgb, ltv_metrics = train_ltv_model(modeling_df, config.random_state)
+
+    best_churn = (
+        churn_logreg
+        if churn_metrics["logreg_acc"] >= churn_metrics["xgb_acc"]
+        else churn_xgb
+    )
+
+    segment_summary = build_segment_summary(
+        segmented_df.merge(
+            modeling_df[["CustomerID", "churn_label", "future_spend"]],
+            on="CustomerID",
+            how="left",
+        ).fillna({"churn_label": 0, "future_spend": 0.0})
+    )
+    segment_summary = recommend_actions(segment_summary)
+
+    bundle = {
+        "scaler": scaler,
+        "kmeans": kmeans,
+        "churn_model": best_churn,
+        "ltv_model": ltv_xgb,
+        "segment_summary": segment_summary,
+        "kmeans_scores": k_scores,
+        "metrics": {**churn_metrics, **ltv_metrics},
+    }
+
+    buffer = io.BytesIO()
+    joblib.dump(bundle, buffer)
+    bundle = None
+    scaler = None
+    kmeans = None
+    churn_logreg = None
+    churn_xgb = None
+    ltv_xgb = None
+    segment_summary = None
+    k_scores = None
+    segmented_df = None
+    rfm = None
+    df_raw = None
+    df = None
+    modeling_df = None
+
+    background_tasks.add_task(_cleanup_buffer, buffer)
+    response = StreamingResponse(
+        _buffer_iterator(buffer),
+        media_type="application/octet-stream",
+        background=background_tasks,
+    )
+    response.headers["Content-Disposition"] = 'attachment; filename="model.joblib"'
+    return response
 
 
 @app.get("/metrics")
@@ -479,6 +568,64 @@ def _action_for_segment(summary: pd.DataFrame, segment: int) -> str:
     if row.empty:
         return "General nurture"
     return row.iloc[0]["recommended_action"]
+
+
+def _read_b2_bytes(url: str, label: str) -> tuple[bytes, str]:
+    parsed = parse_b2_url(url)
+    if not parsed:
+        raise HTTPException(status_code=400, detail=f"Invalid B2 {label} path")
+    bucket, key = parsed
+    client = get_b2_client()
+    if client is None:
+        raise HTTPException(status_code=500, detail="B2 client not configured. Set B2_* env vars in .env.")
+    try:
+        obj = client.get_object(Bucket=bucket, Key=key)
+        return obj["Body"].read(), key
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Unable to load {label} from B2: {exc}")
+
+
+def _load_mapping_from_bytes(payload: bytes, suffix: str) -> dict:
+    text = payload.decode("utf-8")
+    if suffix in {".yaml", ".yml"}:
+        return yaml.safe_load(text)
+    return json.loads(text)
+
+
+def _load_mapping(mapping_path: str) -> dict:
+    parsed = parse_b2_url(mapping_path)
+    if parsed:
+        payload, key = _read_b2_bytes(mapping_path, "mapping")
+        return _load_mapping_from_bytes(payload, Path(key).suffix.lower())
+    mapping_file = Path(mapping_path)
+    return _load_mapping_from_bytes(mapping_file.read_bytes(), mapping_file.suffix.lower())
+
+
+def _load_transactions(dataset_path: str) -> pd.DataFrame:
+    parsed = parse_b2_url(dataset_path)
+    if parsed:
+        payload, key = _read_b2_bytes(dataset_path, "dataset")
+        suffix = Path(key).suffix.lower()
+        if suffix in {".xlsx", ".xls"}:
+            return pd.read_excel(io.BytesIO(payload))
+        return pd.read_csv(io.BytesIO(payload), encoding="ISO-8859-1")
+    return load_raw_transactions(dataset_path)
+
+
+def _buffer_iterator(buffer: io.BytesIO, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
+    buffer.seek(0)
+    while True:
+        chunk = buffer.read(chunk_size)
+        if not chunk:
+            break
+        yield chunk
+
+
+def _cleanup_buffer(buffer: io.BytesIO) -> None:
+    try:
+        buffer.close()
+    finally:
+        gc.collect()
 
 
 @app.post("/predict_job")
