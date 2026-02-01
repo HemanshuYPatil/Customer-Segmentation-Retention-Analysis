@@ -1,0 +1,1 @@
+{"customer_id":"CustomerID","order_id":"InvoiceNo","order_datetime":"InvoiceDate","product_id":"StockCode","quantity":"Quantity","unit_price":"UnitPrice"}

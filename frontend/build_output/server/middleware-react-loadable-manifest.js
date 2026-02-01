@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST="{\"services\\\\api.ts -> @/lib/firebase\":{\"id\":\"services\\\\api.ts -> @/lib/firebase\",\"files\":[\"static/chunks/_app-pages-browser_lib_firebase_ts.js\"]}}"

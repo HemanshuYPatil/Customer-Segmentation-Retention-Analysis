@@ -32,6 +32,10 @@ from firestore_client import (
     write_queue_job,
     update_queue_job,
     list_queue_jobs,
+    write_notification,
+    delete_model,
+    update_prediction,
+    delete_prediction,
 )
 from storage import get_b2_client, download_file, presign_download_url, parse_b2_url
 from notifications import build_prediction_complete_email
@@ -87,6 +91,33 @@ class TrainRequest(BaseModel):
     mapping_path: Optional[str] = None
     notify_email: Optional[str] = None
     queue_id: Optional[str] = None
+
+
+class PredictJobRequest(BaseModel):
+    tenant_id: str
+    model_id: str
+    mode: str  # "single" or "batch"
+    customer_id: Optional[int] = None
+    features: Optional[FeaturePayload] = None
+    notify_email: Optional[str] = None
+    queue_id: Optional[str] = None
+
+
+class QueueJobRequest(BaseModel):
+    queue_id: Optional[str] = None
+    kind: Optional[str] = None
+    payload: Optional[dict] = None
+    status: Optional[str] = None
+
+
+class QueueJobUpdate(BaseModel):
+    status: Optional[str] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
+
+
+class PredictionUpdate(BaseModel):
+    label: Optional[str] = None
 
 
 app = FastAPI(title="Customer Segmentation & Retention API")
@@ -284,7 +315,14 @@ def model_dataset(model_id: str, x_tenant_id: Optional[str] = Header(None)) -> d
     else:
         path = Path(dataset_path)
         if not path.exists():
-            raise HTTPException(status_code=404, detail="Dataset file not found")
+            fallback = ROOT / "dataset" / "tenants" / x_tenant_id / Path(dataset_path).name
+            if fallback.exists():
+                path = fallback
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Dataset file not found: {path}",
+                )
     df = pd.read_csv(path)
     return {"path": str(path), "columns": list(df.columns), "rows": df.to_dict(orient="records")}
 
@@ -386,6 +424,36 @@ def prediction_detail(prediction_id: str, x_tenant_id: Optional[str] = Header(No
     return item
 
 
+@app.patch("/predictions/{prediction_id}")
+def prediction_update(
+    prediction_id: str,
+    request: PredictionUpdate,
+    x_tenant_id: Optional[str] = Header(None),
+) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    item = get_prediction(x_tenant_id, prediction_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    updates: dict = {}
+    if request.label is not None:
+        updates["label"] = request.label
+    if updates:
+        update_prediction(x_tenant_id, prediction_id, updates)
+    return {"status": "ok"}
+
+
+@app.delete("/predictions/{prediction_id}")
+def prediction_delete(prediction_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    item = get_prediction(x_tenant_id, prediction_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    delete_prediction(x_tenant_id, prediction_id)
+    return {"status": "deleted", "prediction_id": prediction_id}
+
+
 @app.get("/predictions/{prediction_id}/download")
 def prediction_download(prediction_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
     if not x_tenant_id:
@@ -481,29 +549,6 @@ def predict(request: PredictRequest, x_tenant_id: Optional[str] = Header(None)) 
     )
 
 
-class PredictJobRequest(BaseModel):
-    tenant_id: str
-    model_id: str
-    mode: str  # "single" or "batch"
-    customer_id: Optional[int] = None
-    features: Optional[FeaturePayload] = None
-    notify_email: Optional[str] = None
-    queue_id: Optional[str] = None
-
-
-class QueueJobRequest(BaseModel):
-    queue_id: Optional[str] = None
-    kind: Optional[str] = None
-    payload: Optional[dict] = None
-    status: Optional[str] = None
-
-
-class QueueJobUpdate(BaseModel):
-    status: Optional[str] = None
-    result: Optional[dict] = None
-    error: Optional[str] = None
-
-
 def _load_artifacts_for_model(tenant_id: str, model_id: str) -> dict:
     model = get_model(tenant_id, model_id)
     if not model:
@@ -536,11 +581,33 @@ def _load_artifacts_for_model(tenant_id: str, model_id: str) -> dict:
     return {
         "scaler": joblib.load(base / "scaler.joblib"),
         "kmeans": joblib.load(base / "kmeans.joblib"),
-        "churn_model": joblib.load(base / "churn_best.joblib"),
+        "churn_model": _load_churn_model(base / "churn_best.joblib"),
         "ltv_model": joblib.load(base / "ltv_xgb.joblib"),
         "segment_summary": pd.read_csv(base / "segment_summary.csv"),
         "feature_store": pd.read_csv(base / "feature_store.csv"),
     }
+
+
+def _load_churn_model(path: Path):
+    model = joblib.load(path)
+    # Back-compat: older pickles may miss attributes expected by newer sklearn.
+    if not hasattr(model, "multi_class"):
+        try:
+            model.multi_class = "auto"
+        except Exception:
+            pass
+    return model
+
+
+@app.delete("/models/{model_id}")
+def model_delete(model_id: str, x_tenant_id: Optional[str] = Header(None)) -> dict:
+    if not x_tenant_id:
+        raise HTTPException(status_code=400, detail="Missing tenant id")
+    model = get_model(x_tenant_id, model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    delete_model(x_tenant_id, model_id)
+    return {"status": "deleted", "model_id": model_id}
 
 
 @app.post("/predict_job")
@@ -597,6 +664,19 @@ def predict_job(request: PredictJobRequest) -> dict:
                     request.queue_id,
                     {"status": "completed", "result": {"prediction_id": prediction_id}},
                 )
+            write_notification(
+                tenant_id=request.tenant_id,
+                notification_id=f"prediction-complete-{prediction_id}",
+                payload={
+                    "type": "prediction_complete",
+                    "level": "success",
+                    "title": "Prediction completed",
+                    "detail": "Single prediction is ready to review.",
+                    "prediction_id": prediction_id,
+                    "queue_id": request.queue_id,
+                    "mode": "single",
+                },
+            )
             if request.notify_email:
                 subject, text, html = build_prediction_complete_email(
                     tenant_id=request.tenant_id,
@@ -660,6 +740,20 @@ def predict_job(request: PredictJobRequest) -> dict:
                     request.queue_id,
                     {"status": "completed", "result": {"prediction_id": prediction_id}},
                 )
+            write_notification(
+                tenant_id=request.tenant_id,
+                notification_id=f"prediction-complete-{prediction_id}",
+                payload={
+                    "type": "prediction_complete",
+                    "level": "success",
+                    "title": "Batch prediction completed",
+                    "detail": f"Batch results ready ({len(results)} rows).",
+                    "prediction_id": prediction_id,
+                    "queue_id": request.queue_id,
+                    "mode": "batch",
+                    "count": int(len(results)),
+                },
+            )
             if request.notify_email:
                 subject, text, html = build_prediction_complete_email(
                     tenant_id=request.tenant_id,
@@ -689,4 +783,17 @@ def predict_job(request: PredictJobRequest) -> dict:
                 request.queue_id,
                 {"status": "failed", "error": str(exc)},
             )
+        write_notification(
+            tenant_id=request.tenant_id,
+            notification_id=f"prediction-failed-{request.queue_id or uuid.uuid4()}",
+            payload={
+                "type": "prediction_failed",
+                "level": "error",
+                "title": "Prediction failed",
+                "detail": "Your prediction job did not finish successfully.",
+                "queue_id": request.queue_id,
+                "mode": request.mode,
+                "error": str(exc),
+            },
+        )
         raise

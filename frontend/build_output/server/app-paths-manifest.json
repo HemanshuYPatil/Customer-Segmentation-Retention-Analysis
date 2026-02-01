@@ -1,0 +1,9 @@
+{
+  "/api/inngest/route": "app/api/inngest/route.js",
+  "/api/queue/email/route": "app/api/queue/email/route.js",
+  "/(dashboard)/page": "app/(dashboard)/page.js",
+  "/(auth)/login/page": "app/(auth)/login/page.js",
+  "/(dashboard)/onboarding/page": "app/(dashboard)/onboarding/page.js",
+  "/(dashboard)/upload-dataset/page": "app/(dashboard)/upload-dataset/page.js",
+  "/(dashboard)/models/page": "app/(dashboard)/models/page.js"
+}

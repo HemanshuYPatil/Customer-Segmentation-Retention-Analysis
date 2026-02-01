@@ -30,6 +30,7 @@ from firestore_client import (
     write_segment_summary,
     write_model_registry,
     update_queue_job,
+    write_notification,
 )
 from notifications import build_training_complete_email
 from email_queue_client import enqueue_email_via_frontend
@@ -104,182 +105,214 @@ def main() -> None:
         paths.reports.mkdir(parents=True, exist_ok=True)
 
         data_file = Path(args.data_path) if args.data_path else config.data_file
+        dataset_path_for_metadata = str(data_file)
+        mapping_path_for_metadata: str | None = None
         if args.queue_id:
             update_queue_job(args.tenant_id, args.queue_id, {"status": "processing"})
         if args.data_path:
+            if parse_b2_url(args.data_path):
+                dataset_path_for_metadata = args.data_path
             data_file = _resolve_b2_input(args.data_path, args.tenant_id, "dataset")
         df_raw = load_raw_transactions(str(data_file))
         if args.mapping_path:
+            if parse_b2_url(args.mapping_path):
+                mapping_path_for_metadata = args.mapping_path
+            else:
+                mapping_path_for_metadata = str(Path(args.mapping_path))
             mapping_path = _resolve_b2_input(args.mapping_path, args.tenant_id, "mapping")
             mapping = _load_mapping(mapping_path)
             df_raw = standardize_columns(df_raw, mapping)
         df = clean_transactions(df_raw)
 
-    snapshot_date = df["InvoiceDate"].max() + pd.Timedelta(days=1)
-    rfm = build_rfm_features(df, snapshot_date)
+        snapshot_date = df["InvoiceDate"].max() + pd.Timedelta(days=1)
+        rfm = build_rfm_features(df, snapshot_date)
 
-    cutoff_date = df["InvoiceDate"].max() - pd.Timedelta(days=config.holdout_days)
-    modeling_df = build_time_split_features(
-        df,
-        cutoff_date=cutoff_date,
-        churn_window_days=config.churn_window_days,
-        ltv_horizon_days=config.ltv_horizon_days,
-    )
-
-    modeling_df = modeling_df[modeling_df["frequency"] >= config.min_transactions].copy()
-
-    run_id = str(uuid.uuid4())
-    mlflow.set_experiment(config.mlflow_experiment)
-    with mlflow.start_run(run_name="customer_segmentation_retention"):
-        mlflow.log_params(
-            {
-                "churn_window_days": config.churn_window_days,
-                "ltv_horizon_days": config.ltv_horizon_days,
-                "holdout_days": config.holdout_days,
-                "min_transactions": config.min_transactions,
-            }
+        cutoff_date = df["InvoiceDate"].max() - pd.Timedelta(days=config.holdout_days)
+        modeling_df = build_time_split_features(
+            df,
+            cutoff_date=cutoff_date,
+            churn_window_days=config.churn_window_days,
+            ltv_horizon_days=config.ltv_horizon_days,
         )
 
-        scaler, kmeans, segmented_df, k_scores = train_segmentation(
-            rfm, config.random_state, config.k_range
-        )
-        segmented_df.to_csv(paths.artifacts / "segmented_customers.csv", index=False)
+        modeling_df = modeling_df[modeling_df["frequency"] >= config.min_transactions].copy()
 
-        churn_logreg, churn_xgb, churn_metrics = train_churn_models(
-            modeling_df, config.random_state
-        )
-        mlflow.log_metrics(churn_metrics)
-
-        ltv_xgb, ltv_metrics = train_ltv_model(modeling_df, config.random_state)
-        mlflow.log_metrics(ltv_metrics)
-
-        y_true = modeling_df["churn_label"].values
-        churn_probs = churn_xgb.predict_proba(
-            modeling_df[
-                [
-                    "recency_days",
-                    "frequency",
-                    "monetary",
-                    "avg_basket_value",
-                    "unique_products",
-                    "avg_interpurchase_days",
-                    "purchase_span_days",
-                ]
-            ]
-        )[:, 1]
-        business_cost = compute_business_cost(y_true, churn_probs, cost_fp=5.0, cost_fn=20.0)
-        mlflow.log_metric("business_cost", business_cost)
-
-        artifacts = ModelArtifacts(
-            scaler=scaler,
-            kmeans=kmeans,
-            churn_logreg=churn_logreg,
-            churn_xgb=churn_xgb,
-            ltv_xgb=ltv_xgb,
-        )
-        save_artifacts(str(paths.artifacts), artifacts)
-        # Save the best churn model by accuracy for API use
-        best_model_name = (
-            "churn_logreg.joblib"
-            if churn_metrics["logreg_acc"] >= churn_metrics["xgb_acc"]
-            else "churn_xgb.joblib"
-        )
-        best_model_path = paths.artifacts / best_model_name
-        (paths.artifacts / "churn_best.joblib").write_bytes(best_model_path.read_bytes())
-
-        modeling_df.to_csv(paths.artifacts / "feature_store.csv", index=False)
-
-        segment_summary = build_segment_summary(
-            segmented_df.merge(
-                modeling_df[["CustomerID", "churn_label", "future_spend"]],
-                on="CustomerID",
-                how="left",
-            ).fillna({"churn_label": 0, "future_spend": 0.0})
-        )
-        segment_summary = recommend_actions(segment_summary)
-        segment_summary.to_csv(paths.artifacts / "segment_summary.csv", index=False)
-        write_strategic_report(segment_summary, str(paths.reports / "strategic_report.md"))
-
-        with open(paths.artifacts / "kmeans_scores.json", "w", encoding="utf-8") as f:
-            json.dump(k_scores, f, indent=2)
-
-        mlflow.log_artifact(str(paths.reports / "strategic_report.md"))
-        mlflow.log_artifact(str(paths.artifacts / "segment_summary.csv"))
-
-        print("Churn metrics:", churn_metrics)
-        print("LTV metrics:", ltv_metrics)
-        print(f"Selected churn model for API: {best_model_name}")
-
-        b2_bucket = os.getenv("B2_BUCKET")
-        client = get_b2_client()
-        if client and b2_bucket:
-            prefix = f"tenants/{args.tenant_id}/models"
-            local_paths = [
-                paths.artifacts / "scaler.joblib",
-                paths.artifacts / "kmeans.joblib",
-                paths.artifacts / "churn_logreg.joblib",
-                paths.artifacts / "churn_xgb.joblib",
-                paths.artifacts / "churn_best.joblib",
-                paths.artifacts / "ltv_xgb.joblib",
-                paths.artifacts / "segment_summary.csv",
-                paths.artifacts / "feature_store.csv",
-                paths.artifacts / "kmeans_scores.json",
-            ]
-            upload_files(client, b2_bucket, local_paths, prefix)
-            artifact_prefix = f"b2://{b2_bucket}/{prefix}"
-        else:
-            artifact_prefix = str(paths.artifacts)
-
-        full_metrics = {**churn_metrics, **ltv_metrics, "business_cost": business_cost}
-        write_training_metadata(
-            tenant_id=args.tenant_id,
-            run_id=run_id,
-            metrics=full_metrics,
-            artifact_prefix=artifact_prefix,
-            dataset_path=str(data_file),
-            mapping_path=str(args.mapping_path) if args.mapping_path else None,
-        )
-        model_name = f"{Path(data_file).name} ({run_id[:8]})"
-        write_model_registry(
-            tenant_id=args.tenant_id,
-            model_id=run_id,
-            name=model_name,
-            metrics=full_metrics,
-            artifact_prefix=artifact_prefix,
-        )
-        write_segment_summary(
-            tenant_id=args.tenant_id,
-            run_id=run_id,
-            summary_rows=segment_summary.to_dict(orient="records"),
-        )
-        if args.queue_id:
-            update_queue_job(
-                args.tenant_id,
-                args.queue_id,
-                {"status": "completed", "result": {"model_id": run_id, "model_name": model_name}},
+        run_id = str(uuid.uuid4())
+        mlflow.set_experiment(config.mlflow_experiment)
+        with mlflow.start_run(run_name="customer_segmentation_retention"):
+            mlflow.log_params(
+                {
+                    "churn_window_days": config.churn_window_days,
+                    "ltv_horizon_days": config.ltv_horizon_days,
+                    "holdout_days": config.holdout_days,
+                    "min_transactions": config.min_transactions,
+                }
             )
-        if args.notify_email:
-            subject, text, html = build_training_complete_email(
+
+            scaler, kmeans, segmented_df, k_scores = train_segmentation(
+                rfm, config.random_state, config.k_range
+            )
+            segmented_df.to_csv(paths.artifacts / "segmented_customers.csv", index=False)
+
+            churn_logreg, churn_xgb, churn_metrics = train_churn_models(
+                modeling_df, config.random_state
+            )
+            mlflow.log_metrics(churn_metrics)
+
+            ltv_xgb, ltv_metrics = train_ltv_model(modeling_df, config.random_state)
+            mlflow.log_metrics(ltv_metrics)
+
+            y_true = modeling_df["churn_label"].values
+            churn_probs = churn_xgb.predict_proba(
+                modeling_df[
+                    [
+                        "recency_days",
+                        "frequency",
+                        "monetary",
+                        "avg_basket_value",
+                        "unique_products",
+                        "avg_interpurchase_days",
+                        "purchase_span_days",
+                    ]
+                ]
+            )[:, 1]
+            business_cost = compute_business_cost(y_true, churn_probs, cost_fp=5.0, cost_fn=20.0)
+            mlflow.log_metric("business_cost", business_cost)
+
+            artifacts = ModelArtifacts(
+                scaler=scaler,
+                kmeans=kmeans,
+                churn_logreg=churn_logreg,
+                churn_xgb=churn_xgb,
+                ltv_xgb=ltv_xgb,
+            )
+            save_artifacts(str(paths.artifacts), artifacts)
+            # Save the best churn model by accuracy for API use
+            best_model_name = (
+                "churn_logreg.joblib"
+                if churn_metrics["logreg_acc"] >= churn_metrics["xgb_acc"]
+                else "churn_xgb.joblib"
+            )
+            best_model_path = paths.artifacts / best_model_name
+            (paths.artifacts / "churn_best.joblib").write_bytes(best_model_path.read_bytes())
+
+            modeling_df.to_csv(paths.artifacts / "feature_store.csv", index=False)
+
+            segment_summary = build_segment_summary(
+                segmented_df.merge(
+                    modeling_df[["CustomerID", "churn_label", "future_spend"]],
+                    on="CustomerID",
+                    how="left",
+                ).fillna({"churn_label": 0, "future_spend": 0.0})
+            )
+            segment_summary = recommend_actions(segment_summary)
+            segment_summary.to_csv(paths.artifacts / "segment_summary.csv", index=False)
+            write_strategic_report(segment_summary, str(paths.reports / "strategic_report.md"))
+
+            with open(paths.artifacts / "kmeans_scores.json", "w", encoding="utf-8") as f:
+                json.dump(k_scores, f, indent=2)
+
+            mlflow.log_artifact(str(paths.reports / "strategic_report.md"))
+            mlflow.log_artifact(str(paths.artifacts / "segment_summary.csv"))
+
+            print("Churn metrics:", churn_metrics)
+            print("LTV metrics:", ltv_metrics)
+            print(f"Selected churn model for API: {best_model_name}")
+
+            b2_bucket = os.getenv("B2_BUCKET")
+            client = get_b2_client()
+            if client and b2_bucket:
+                prefix = f"tenants/{args.tenant_id}/models"
+                local_paths = [
+                    paths.artifacts / "scaler.joblib",
+                    paths.artifacts / "kmeans.joblib",
+                    paths.artifacts / "churn_logreg.joblib",
+                    paths.artifacts / "churn_xgb.joblib",
+                    paths.artifacts / "churn_best.joblib",
+                    paths.artifacts / "ltv_xgb.joblib",
+                    paths.artifacts / "segment_summary.csv",
+                    paths.artifacts / "feature_store.csv",
+                    paths.artifacts / "kmeans_scores.json",
+                ]
+                upload_files(client, b2_bucket, local_paths, prefix)
+                artifact_prefix = f"b2://{b2_bucket}/{prefix}"
+            else:
+                artifact_prefix = str(paths.artifacts)
+
+            full_metrics = {**churn_metrics, **ltv_metrics, "business_cost": business_cost}
+            write_training_metadata(
                 tenant_id=args.tenant_id,
                 run_id=run_id,
                 metrics=full_metrics,
                 artifact_prefix=artifact_prefix,
-                model_name=model_name,
+                dataset_path=dataset_path_for_metadata,
+                mapping_path=mapping_path_for_metadata if args.mapping_path else None,
             )
-            try:
-                enqueue_email_via_frontend(
-                    to_email=args.notify_email,
-                    subject=subject,
-                    html=html,
-                    text=text,
-                    metadata={"type": "training_complete", "tenant_id": args.tenant_id, "run_id": run_id},
-                    event_id=f"training-email-{run_id}",
+            model_name = f"{Path(data_file).name} ({run_id[:8]})"
+            write_model_registry(
+                tenant_id=args.tenant_id,
+                model_id=run_id,
+                name=model_name,
+                metrics=full_metrics,
+                artifact_prefix=artifact_prefix,
+            )
+            write_segment_summary(
+                tenant_id=args.tenant_id,
+                run_id=run_id,
+                summary_rows=segment_summary.to_dict(orient="records"),
+            )
+            if args.queue_id:
+                update_queue_job(
+                    args.tenant_id,
+                    args.queue_id,
+                    {"status": "completed", "result": {"model_id": run_id, "model_name": model_name}},
                 )
-            except Exception as exc:
-                print(f"[email] queue failed: {exc}")
+            write_notification(
+                tenant_id=args.tenant_id,
+                notification_id=f"training-complete-{run_id}",
+                payload={
+                    "type": "training_complete",
+                    "level": "success",
+                    "title": "Training completed",
+                    "detail": f"Model {model_name} is ready for use.",
+                    "model_id": run_id,
+                    "queue_id": args.queue_id,
+                },
+            )
+            if args.notify_email:
+                subject, text, html = build_training_complete_email(
+                    tenant_id=args.tenant_id,
+                    run_id=run_id,
+                    metrics=full_metrics,
+                    artifact_prefix=artifact_prefix,
+                    model_name=model_name,
+                )
+                try:
+                    enqueue_email_via_frontend(
+                        to_email=args.notify_email,
+                        subject=subject,
+                        html=html,
+                        text=text,
+                        metadata={"type": "training_complete", "tenant_id": args.tenant_id, "run_id": run_id},
+                        event_id=f"training-email-{run_id}",
+                    )
+                except Exception as exc:
+                    print(f"[email] queue failed: {exc}")
     except Exception as exc:
         if args.queue_id:
             update_queue_job(args.tenant_id, args.queue_id, {"status": "failed", "error": str(exc)})
+        write_notification(
+            tenant_id=args.tenant_id,
+            notification_id=f"training-failed-{args.queue_id or uuid.uuid4()}",
+            payload={
+                "type": "training_failed",
+                "level": "error",
+                "title": "Training failed",
+                "detail": "Your training job did not finish successfully.",
+                "queue_id": args.queue_id,
+                "error": str(exc),
+            },
+        )
         raise
 
 

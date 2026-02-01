@@ -171,6 +171,22 @@ def update_queue_job(tenant_id: str, queue_id: str, updates: Dict[str, Any]) -> 
     db.collection("tenants").document(tenant_id).collection("queue_jobs").document(queue_id).set(payload, merge=True)
 
 
+def write_notification(
+    tenant_id: str,
+    notification_id: str,
+    payload: Dict[str, Any],
+) -> None:
+    db = get_firestore()
+    if db is None:
+        return
+    data = {
+        **payload,
+        "read_at": None,
+        "created_at": firestore.SERVER_TIMESTAMP,
+    }
+    db.collection("tenants").document(tenant_id).collection("notifications").document(notification_id).set(data)
+
+
 def list_queue_jobs(tenant_id: str, kind: Optional[str] = None, limit: int = 200) -> list[dict]:
     db = get_firestore()
     if db is None:
@@ -253,6 +269,24 @@ def get_prediction(tenant_id: str, prediction_id: str) -> Optional[dict]:
     return doc.to_dict() if doc.exists else None
 
 
+def update_prediction(tenant_id: str, prediction_id: str, updates: Dict[str, Any]) -> None:
+    db = get_firestore()
+    if db is None:
+        return
+    payload = {**updates, "updated_at": firestore.SERVER_TIMESTAMP}
+    db.collection("tenants").document(tenant_id).collection("predictions").document(prediction_id).set(
+        payload,
+        merge=True,
+    )
+
+
+def delete_prediction(tenant_id: str, prediction_id: str) -> None:
+    db = get_firestore()
+    if db is None:
+        return
+    db.collection("tenants").document(tenant_id).collection("predictions").document(prediction_id).delete()
+
+
 def set_default_model(tenant_id: str, model_id: str) -> None:
     db = get_firestore()
     if db is None:
@@ -268,6 +302,19 @@ def get_default_model(tenant_id: str) -> Optional[str]:
     if not doc.exists:
         return None
     return doc.to_dict().get("default_model")
+
+
+def delete_model(tenant_id: str, model_id: str) -> None:
+    db = get_firestore()
+    if db is None:
+        return
+    tenant_ref = db.collection("tenants").document(tenant_id)
+    tenant_ref.collection("models").document(model_id).delete()
+    tenant_ref.collection("training_runs").document(model_id).delete()
+    tenant_ref.collection("segments").document(model_id).delete()
+    tenant_doc = tenant_ref.get()
+    if tenant_doc.exists and tenant_doc.to_dict().get("default_model") == model_id:
+        tenant_ref.update({"default_model": firestore.DELETE_FIELD})
 
 
 def get_latest_metrics(tenant_id: str) -> Dict[str, float]:

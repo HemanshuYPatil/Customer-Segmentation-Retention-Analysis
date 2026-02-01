@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   ResponsiveContainer,
@@ -33,6 +33,7 @@ export default function SegmentChart({ data, dataTour }: SegmentChartProps) {
     () => prepared.reduce((sum, item) => sum + (item.customers ?? 0), 0),
     [prepared]
   );
+  const topSegment = prepared[0];
 
   return (
     <Card className="h-full" data-tour={dataTour}>
@@ -40,11 +41,20 @@ export default function SegmentChart({ data, dataTour }: SegmentChartProps) {
         <div>
           <CardTitle>Active Segment Distribution</CardTitle>
           <p className="text-xs text-muted">
-            {prepared.length ? `${prepared.length} segments · ${totalCustomers.toLocaleString()} customers` : "No segments yet"}
+            {prepared.length
+              ? `${prepared.length} segments · ${totalCustomers.toLocaleString()} customers`
+              : "No segments yet"}
           </p>
+          {topSegment ? (
+            <p className="mt-1 text-xs text-muted">
+              Top segment: {topSegment.label} ·{" "}
+              {Math.round((topSegment.customers / Math.max(totalCustomers, 1)) * 100)}%
+            </p>
+          ) : null}
         </div>
-        <div className="rounded-full border border-panelBorder bg-panel px-3 py-1 text-xs text-muted">
-          Updated live
+        <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-400">
+          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+          Live
         </div>
       </div>
       <div className="h-64">
@@ -76,6 +86,7 @@ export default function SegmentChart({ data, dataTour }: SegmentChartProps) {
                 axisLine={false}
                 tickLine={false}
                 width={30}
+                tickFormatter={(value: number) => value.toLocaleString()}
               />
               <Tooltip
                 cursor={{ fill: "rgba(255,255,255,0.04)" }}
@@ -87,6 +98,12 @@ export default function SegmentChart({ data, dataTour }: SegmentChartProps) {
                   boxShadow: "0 14px 30px rgba(0,0,0,0.28)"
                 }}
                 labelStyle={{ color: "rgb(var(--color-muted))" }}
+                formatter={(value: number) => {
+                  const percent = totalCustomers
+                    ? `${Math.round((value / totalCustomers) * 100)}%`
+                    : "0%";
+                  return [`${value.toLocaleString()} (${percent})`, "Customers"];
+                }}
               />
               <Bar
                 dataKey="customers"
@@ -109,3 +126,5 @@ export default function SegmentChart({ data, dataTour }: SegmentChartProps) {
     </Card>
   );
 }
+
+
