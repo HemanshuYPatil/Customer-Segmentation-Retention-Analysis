@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { api } from "@/services/api";
 import { useMemo } from "react";
@@ -8,6 +9,9 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
+import { useAuth } from "@/components/auth-provider";
+import { db } from "@/lib/firebase";
+import { useEffect, useState } from "react";
 
 function formatRelativeTime(value: any) {
   if (!value) return "--";
@@ -67,6 +71,21 @@ function getTimestampMs(value: any) {
 }
 
 export default function ModelsPage() {
+  const { user } = useAuth();
+  const [queueJobs, setQueueJobs] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) {
+      setQueueJobs([]);
+      return;
+    }
+    const jobsRef = collection(db, "tenants", user.uid, "queue_jobs");
+    const q = query(jobsRef, orderBy("created_at", "asc"), limit(200));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setQueueJobs(snapshot.docs.map((doc) => ({ ...doc.data(), queue_id: doc.id })));
+    });
+    return () => unsub();
+  }, [user]);
   const metricsQuery = useQuery({
     queryKey: ["metrics"],
     queryFn: api.metrics,
@@ -88,12 +107,10 @@ export default function ModelsPage() {
     refetchInterval: 5000
   });
 
-  const queueQuery = useQuery({
-    queryKey: ["queue", "training"],
-    queryFn: () => api.queueJobs("training"),
-    retry: false,
-    refetchInterval: 5000
-  });
+  const trainingJobs = useMemo(
+    () => queueJobs.filter((job) => job.kind === "training"),
+    [queueJobs]
+  );
 
   const defaultId = defaultQuery.data?.model_id ?? "";
 
@@ -105,15 +122,17 @@ export default function ModelsPage() {
   }, [modelsQuery.data]);
   const pendingModels = useMemo(() => {
     const visible = new Set(["queued", "processing", "failed", "canceled"]);
-    return (queueQuery.data ?? [])
+    return (trainingJobs ?? [])
       .filter((job: any) => visible.has(job.status))
       .map((job: any) => ({
         tempId: job.queue_id,
         name: job.payload?.model_label || "Training job",
         createdAt: job.created_at,
-        status: job.status || "queued"
+        status: job.status || "queued",
+        started_at: job.started_at,
+        duration_ms: job.duration_ms
       }));
-  }, [queueQuery.data]);
+  }, [trainingJobs]);
 
   const hasRows = pendingModels.length + modelRows.length > 0;
 
@@ -121,6 +140,44 @@ export default function ModelsPage() {
   const latestAccuracy =
     latestModel?.metrics?.logreg_acc ?? metricsQuery.data?.logreg_acc;
   const latestF1 = latestModel?.metrics?.logreg_f1 ?? metricsQuery.data?.logreg_f1;
+
+  const formatDuration = (ms: number) => {
+    if (!Number.isFinite(ms) || ms <= 0) return "—";
+    const totalSeconds = Math.round(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes <= 0) return `${seconds}s`;
+    return `${minutes}m ${seconds}s`;
+  };
+
+  const avgTrainingMs = useMemo(() => {
+    const completed = trainingJobs
+      .filter((job) => job.status === "completed" && typeof job.duration_ms === "number")
+      .sort((a, b) => getTimestampMs(b.completed_at ?? b.updated_at) - getTimestampMs(a.completed_at ?? a.updated_at))
+      .slice(0, 5);
+    if (completed.length === 0) return 4 * 60 * 1000;
+    const total = completed.reduce((sum, job) => sum + Number(job.duration_ms || 0), 0);
+    return Math.max(30000, total / completed.length);
+  }, [trainingJobs]);
+
+  const trainingEtaById = useMemo(() => {
+    const active = trainingJobs
+      .filter((job) => ["queued", "processing"].includes(job.status))
+      .sort((a, b) => getTimestampMs(a.created_at) - getTimestampMs(b.created_at));
+    let cumulative = 0;
+    const map = new Map<string, number>();
+    active.forEach((job) => {
+      const expected = avgTrainingMs;
+      let remaining = expected;
+      if (job.status === "processing" && job.started_at) {
+        const elapsed = Date.now() - getTimestampMs(job.started_at);
+        remaining = Math.max(expected - elapsed, 5000);
+      }
+      cumulative += remaining;
+      map.set(job.queue_id, cumulative);
+    });
+    return map;
+  }, [trainingJobs, avgTrainingMs]);
 
   return (
     <Card>
@@ -189,6 +246,11 @@ export default function ModelsPage() {
                             ? "Processing"
                             : "Queued"}
                     </Badge>
+                    {["queued", "processing"].includes(model.status) && (
+                      <p className="mt-1 text-xs text-muted">
+                        ETA ~ {formatDuration(trainingEtaById.get(model.tempId) ?? 0)}
+                      </p>
+                    )}
                   </TD>
                   <TD>
                     <span className="flex h-7 w-7 items-center justify-center rounded-full border border-panelBorder text-muted">
