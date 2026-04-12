@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { requiredFields, optionalFields } from "@/lib/mapping";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
@@ -12,6 +12,9 @@ import { useToast } from "@/components/ui/toast";
 import { api } from "@/services/api";
 import { useAuth } from "@/components/auth-provider";
 import { useRouter } from "next/navigation";
+import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { Badge } from "@/components/ui/badge";
 
 type Mapping = Record<string, string>;
 
@@ -28,6 +31,20 @@ export default function MappingForm() {
   const { push } = useToast();
   const { user } = useAuth();
   const router = useRouter();
+  const [queueJobs, setQueueJobs] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!user) {
+      setQueueJobs([]);
+      return;
+    }
+    const jobsRef = collection(db, "tenants", user.uid, "queue_jobs");
+    const q = query(jobsRef, orderBy("created_at", "asc"), limit(200));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setQueueJobs(snapshot.docs.map((doc) => ({ ...doc.data(), queue_id: doc.id })));
+    });
+    return () => unsub();
+  }, [user]);
 
   const parseFile = useCallback(async (file: File) => {
     const buffer = await file.arrayBuffer();
@@ -92,6 +109,60 @@ export default function MappingForm() {
     () => new Set(Object.values(mapping).filter(Boolean)),
     [mapping]
   );
+
+  const trainingJobs = useMemo(
+    () => queueJobs.filter((job) => job.kind === "training"),
+    [queueJobs]
+  );
+
+  const getTimestampMs = (value: any) => {
+    if (!value) return 0;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number") return value;
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+    }
+    if (value.seconds) return value.seconds * 1000;
+    if (value._seconds) return value._seconds * 1000;
+    if (value.toMillis) return value.toMillis();
+    if (value.toDate) return value.toDate().getTime();
+    return 0;
+  };
+
+  const formatDuration = (ms: number) => {
+    if (!Number.isFinite(ms) || ms <= 0) return "—";
+    const totalSeconds = Math.round(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes <= 0) return `${seconds}s`;
+    return `${minutes}m ${seconds}s`;
+  };
+
+  const avgTrainingMs = useMemo(() => {
+    const completed = trainingJobs
+      .filter((job) => job.status === "completed" && typeof job.duration_ms === "number")
+      .sort((a, b) => getTimestampMs(b.completed_at ?? b.updated_at) - getTimestampMs(a.completed_at ?? a.updated_at))
+      .slice(0, 5);
+    if (completed.length === 0) return 4 * 60 * 1000;
+    const total = completed.reduce((sum, job) => sum + Number(job.duration_ms || 0), 0);
+    return Math.max(30000, total / completed.length);
+  }, [trainingJobs]);
+
+  const pendingTrainingEta = useMemo(() => {
+    const active = trainingJobs
+      .filter((job) => ["queued", "processing"].includes(job.status))
+      .sort((a, b) => getTimestampMs(a.created_at) - getTimestampMs(b.created_at));
+    const backlog = active.reduce((sum, job) => {
+      const expected = avgTrainingMs;
+      if (job.status === "processing" && job.started_at) {
+        const elapsed = Date.now() - getTimestampMs(job.started_at);
+        return sum + Math.max(expected - elapsed, 5000);
+      }
+      return sum + expected;
+    }, 0);
+    return backlog + avgTrainingMs;
+  }, [trainingJobs, avgTrainingMs]);
 
   const getOptions = useCallback(
     (fieldKey: string) => {
@@ -281,6 +352,12 @@ export default function MappingForm() {
               <div>
                 <p className="text-sm font-semibold">Train model</p>
                 <p className="text-xs text-muted">We will validate your mapping and start training.</p>
+                <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted">
+                  <Badge className="border-emerald-400/50 bg-emerald-400/15 text-emerald-300">
+                    Estimated time
+                  </Badge>
+                  <span>~ {formatDuration(pendingTrainingEta)}</span>
+                </div>
               </div>
               <Button onClick={handleTrain} disabled={loading} loading={loading}>
                 Train Model

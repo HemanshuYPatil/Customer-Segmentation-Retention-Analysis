@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from typing import Any, Dict, Optional
+from datetime import datetime, timezone
 
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -168,6 +169,32 @@ def update_queue_job(tenant_id: str, queue_id: str, updates: Dict[str, Any]) -> 
     if db is None:
         return
     payload = {**updates, "updated_at": firestore.SERVER_TIMESTAMP}
+    status = updates.get("status")
+    if status == "processing":
+        payload.setdefault("started_at", firestore.SERVER_TIMESTAMP)
+    if status in {"completed", "failed", "canceled"}:
+        payload.setdefault("completed_at", firestore.SERVER_TIMESTAMP)
+        try:
+            doc = (
+                db.collection("tenants")
+                .document(tenant_id)
+                .collection("queue_jobs")
+                .document(queue_id)
+                .get()
+            )
+            if doc.exists:
+                data = doc.to_dict() or {}
+                started_at = data.get("started_at")
+                if started_at and "duration_ms" not in payload:
+                    if hasattr(started_at, "timestamp"):
+                        started_ms = int(started_at.timestamp() * 1000)
+                    else:
+                        started_ms = 0
+                    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+                    if started_ms > 0:
+                        payload["duration_ms"] = max(0, now_ms - started_ms)
+        except Exception:
+            pass
     db.collection("tenants").document(tenant_id).collection("queue_jobs").document(queue_id).set(payload, merge=True)
 
 

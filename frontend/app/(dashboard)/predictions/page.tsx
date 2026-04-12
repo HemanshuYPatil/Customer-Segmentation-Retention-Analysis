@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { api } from "@/services/api";
@@ -12,6 +12,8 @@ import { useAuth } from "@/components/auth-provider";
 import { useToast } from "@/components/ui/toast";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 function formatRelativeTime(value: any) {
   if (!value) return "—";
@@ -71,6 +73,7 @@ export default function PredictionsPage() {
   const [deleteText, setDeleteText] = useState("");
   const [updating, setUpdating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [queueJobs, setQueueJobs] = useState<any[]>([]);
 
   const modelsQuery = useQuery({
     queryKey: ["models"],
@@ -84,11 +87,18 @@ export default function PredictionsPage() {
     refetchInterval: 5000
   });
 
-  const queueQuery = useQuery({
-    queryKey: ["queue", "prediction"],
-    queryFn: () => api.queueJobs("prediction"),
-    refetchInterval: 5000
-  });
+  useEffect(() => {
+    if (!user) {
+      setQueueJobs([]);
+      return;
+    }
+    const jobsRef = collection(db, "tenants", user.uid, "queue_jobs");
+    const q = query(jobsRef, orderBy("created_at", "asc"), limit(200));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setQueueJobs(snapshot.docs.map((doc) => ({ ...doc.data(), queue_id: doc.id })));
+    });
+    return () => unsub();
+  }, [user]);
 
   const modelNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -101,16 +111,19 @@ export default function PredictionsPage() {
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const queuedPredictions = useMemo(() => {
     const visible = new Set(["queued", "processing", "failed", "canceled"]);
-    return (queueQuery.data ?? [])
+    return (queueJobs ?? [])
+      .filter((job: any) => job.kind === "prediction")
       .filter((job: any) => visible.has(job.status))
       .map((job: any) => ({
         prediction_id: job.queue_id,
         payload: job.payload,
         created_at: job.created_at,
         status: job.status || "queued",
-        isQueued: true
+        isQueued: true,
+        started_at: job.started_at,
+        duration_ms: job.duration_ms
       }));
-  }, [queueQuery.data]);
+  }, [queueJobs]);
 
   const predictions = useMemo(() => {
     return [...queuedPredictions, ...(predictionsQuery.data ?? [])];
@@ -118,12 +131,89 @@ export default function PredictionsPage() {
 
   const queuedCount = queuedPredictions.length;
 
+  const getTimestampMs = (value: any) => {
+    if (!value) return 0;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number") return value;
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+    }
+    if (value.seconds) return value.seconds * 1000;
+    if (value._seconds) return value._seconds * 1000;
+    if (value.toMillis) return value.toMillis();
+    if (value.toDate) return value.toDate().getTime();
+    return 0;
+  };
+
+  const formatDuration = (ms: number) => {
+    if (!Number.isFinite(ms) || ms <= 0) return "—";
+    const totalSeconds = Math.round(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes <= 0) return `${seconds}s`;
+    return `${minutes}m ${seconds}s`;
+  };
+
+  const avgPredictionMs = useMemo(() => {
+    const completed = queueJobs
+      .filter((job: any) => job.kind === "prediction" && job.status === "completed" && typeof job.duration_ms === "number")
+      .sort((a: any, b: any) => getTimestampMs(b.completed_at ?? b.updated_at) - getTimestampMs(a.completed_at ?? a.updated_at))
+      .slice(0, 10);
+    const byMode = { single: [] as number[], batch: [] as number[] };
+    completed.forEach((job: any) => {
+      const mode = job.payload?.mode === "batch" ? "batch" : "single";
+      byMode[mode].push(Number(job.duration_ms || 0));
+    });
+    const avg = (items: number[], fallback: number) =>
+      items.length ? Math.max(5000, items.reduce((sum, val) => sum + val, 0) / items.length) : fallback;
+    return {
+      single: avg(byMode.single, 45 * 1000),
+      batch: avg(byMode.batch, 3 * 60 * 1000)
+    };
+  }, [queueJobs]);
+
+  const predictionEtaById = useMemo(() => {
+    const active = queueJobs
+      .filter((job: any) => job.kind === "prediction" && ["queued", "processing"].includes(job.status))
+      .sort((a: any, b: any) => getTimestampMs(a.created_at) - getTimestampMs(b.created_at));
+    let cumulative = 0;
+    const map = new Map<string, number>();
+    active.forEach((job: any) => {
+      const expected =
+        job.payload?.mode === "batch" ? avgPredictionMs.batch : avgPredictionMs.single;
+      let remaining = expected;
+      if (job.status === "processing" && job.started_at) {
+        const elapsed = Date.now() - getTimestampMs(job.started_at);
+        remaining = Math.max(expected - elapsed, 5000);
+      }
+      cumulative += remaining;
+      map.set(job.queue_id, cumulative);
+    });
+    return map;
+  }, [queueJobs, avgPredictionMs]);
+
+  const newPredictionEta = useMemo(() => {
+    const active = queueJobs.filter(
+      (job: any) => job.kind === "prediction" && ["queued", "processing"].includes(job.status)
+    );
+    const backlog = active.reduce((sum: number, job: any) => {
+      const expected = job.payload?.mode === "batch" ? avgPredictionMs.batch : avgPredictionMs.single;
+      if (job.status === "processing" && job.started_at) {
+        const elapsed = Date.now() - getTimestampMs(job.started_at);
+        return sum + Math.max(expected - elapsed, 5000);
+      }
+      return sum + expected;
+    }, 0);
+    const expectedNew = predictionType === "batch" ? avgPredictionMs.batch : avgPredictionMs.single;
+    return backlog + expectedNew;
+  }, [queueJobs, avgPredictionMs, predictionType]);
+
   const cancelJob = async (queueId: string) => {
     setCancelingId(queueId);
     try {
       await api.updateQueueJob(queueId, { status: "canceled" });
       push({ title: "Queue canceled.", tone: "success" });
-      queueQuery.refetch();
     } catch {
       push({ title: "Cancel failed.", description: "Try again.", tone: "error" });
     } finally {
@@ -298,6 +388,14 @@ export default function PredictionsPage() {
                       Model: {modelNameById.get(item.payload?.model_id) || "—"} ·{" "}
                       {formatRelativeTime(item.created_at)}
                     </p>
+                    {["queued", "processing"].includes(item.status) && (
+                      <div className="mt-1 inline-flex items-center gap-2 text-xs text-muted">
+                        <span className="inline-flex items-center rounded-full border border-emerald-400/50 bg-emerald-400/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                          Estimated time
+                        </span>
+                        <span>~ {formatDuration(predictionEtaById.get(item.prediction_id) ?? 0)}</span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <span
@@ -455,12 +553,18 @@ export default function PredictionsPage() {
               </div>
 
               {predictionType === "single" ? (
-                <div className="rounded-xl border border-panelBorder bg-panel p-4 md:col-span-2">
-                  <p className="text-sm font-semibold">Single prediction</p>
-                  <p className="mt-1 text-xs text-muted">Enter a customer ID to run a prediction.</p>
-                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
-                    <Input
-                      placeholder="Customer ID"
+            <div className="rounded-xl border border-panelBorder bg-panel p-4 md:col-span-2">
+              <p className="text-sm font-semibold">Single prediction</p>
+              <p className="mt-1 text-xs text-muted">Enter a customer ID to run a prediction.</p>
+              <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted">
+                <span className="inline-flex items-center rounded-full border border-emerald-400/50 bg-emerald-400/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                  Estimated time
+                </span>
+                <span>~ {formatDuration(newPredictionEta)}</span>
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
+                <Input
+                  placeholder="Customer ID"
                       value={customerId}
                       onChange={(e) => setCustomerId(e.target.value)}
                     />
@@ -470,16 +574,22 @@ export default function PredictionsPage() {
                   </div>
                 </div>
               ) : (
-                <div className="rounded-xl border border-panelBorder bg-panel p-4 md:col-span-2">
-                  <p className="text-sm font-semibold">Batch prediction</p>
-                  <p className="mt-1 text-xs text-muted">
-                    Run predictions for all customers in the model dataset.
-                  </p>
-                  <div className="mt-3">
-                    <Button onClick={runBatch} disabled={!selectedModel} loading={isQueueingBatch}>
-                      Run batch prediction
-                    </Button>
-                  </div>
+            <div className="rounded-xl border border-panelBorder bg-panel p-4 md:col-span-2">
+              <p className="text-sm font-semibold">Batch prediction</p>
+              <p className="mt-1 text-xs text-muted">
+                Run predictions for all customers in the model dataset.
+              </p>
+              <div className="mt-2 inline-flex items-center gap-2 text-xs text-muted">
+                <span className="inline-flex items-center rounded-full border border-emerald-400/50 bg-emerald-400/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                  Estimated time
+                </span>
+                <span>~ {formatDuration(newPredictionEta)}</span>
+              </div>
+              <div className="mt-3">
+                <Button onClick={runBatch} disabled={!selectedModel} loading={isQueueingBatch}>
+                  Run batch prediction
+                </Button>
+              </div>
                 </div>
               )}
             </div>

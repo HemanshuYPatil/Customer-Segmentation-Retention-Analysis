@@ -1,171 +1,176 @@
-# Customer Segmentation & Retention Analysis
+﻿# Customer Segmentation and Retention Analysis
 
-## 📌 Project Overview
+End-to-end customer segmentation, churn prediction, and LTV estimation with a FastAPI backend, a Streamlit analyst dashboard, and a Next.js business UI. The pipeline cleans transactional data, builds RFM and engagement features, trains segmentation and predictive models, and serves results through an API.
 
-This project is an end-to-end Data Science solution designed to analyze customer behavior, segment customers based on their transactional history, and predict churn and Lifetime Value (LTV). It enables businesses to move from raw messy data to actionable strategic insights.
-
-The system includes a robust data processing pipeline, a Machine Learning backend (serving predictions via FastAPI), and two user interfaces: a strategic Streamlit dashboard for data scientists/analysts and a modern Next.js frontend for business users.
-
-## 🏗 Architecture Flow
+## Architecture
 
 ```mermaid
 flowchart LR
-    A[Raw Transactions] --> B[Data Cleaning & Validation]
-    B --> C[RFM + Engagement Features]
-    C --> D[Segmentation: K-Means Personas]
-    C --> E[Churn Model: LogReg vs XGBoost]
-    C --> F[LTV Model: XGBoost Regressor]
-    D --> G[Strategic Actions]
+    A[Raw Transactions] --> B[Cleaning and Validation]
+    B --> C[Feature Engineering (RFM + Engagement)]
+    C --> D[Segmentation (K-Means)]
+    C --> E[Churn Model (LogReg vs XGBoost)]
+    C --> F[LTV Model (XGBoost Regressor)]
+    D --> G[Segment Summary and Actions]
     E --> G
     F --> G
-    G --> H[Retention/Resource Allocation Plan]
+    G --> H[API + Dashboards]
 ```
 
-## 🚀 Key Features
+## Key Features
 
-*   **Automated Data Pipeline:** Cleans and standardizes raw transactional data (handling missing values, cancellations, etc.).
-*   **Feature Engineering:** Calculates Recency, Frequency, Monetary (RFM) metrics and engagement proxies.
-*   **Customer Segmentation:** Uses K-Means clustering to identify distinct customer personas.
-*   **Predictive Modeling:**
-    *   **Churn Prediction:** Compares Logistic Regression and XGBoost to identify at-risk customers.
-    *   **LTV Estimation:** Predicts future customer value using XGBoost Regression.
-*   **Experiment Tracking:** Uses MLflow to track model performance and artifacts.
-*   **API Deployment:** Exposes model predictions via a high-performance FastAPI backend.
-*   **Dual Interfaces:**
-    *   **Streamlit Dashboard:** For model training, evaluation, and strategic reporting.
-    *   **Next.js App:** A polished UI for viewing customer predictions and segment insights.
+- Automated data cleaning and standardization for transactional datasets.
+- RFM and time-split feature engineering.
+- K-Means segmentation with summary and recommended actions.
+- Churn prediction and LTV estimation with model selection.
+- MLflow experiment tracking and artifact generation.
+- FastAPI backend for training, predictions, and dataset/model access.
+- Streamlit dashboard for analysis and reporting.
+- Next.js app for business-facing workflows.
+- Optional Backblaze B2 storage for artifacts and datasets.
+- Optional Firestore metadata storage for models, runs, queues, and predictions.
 
-## 🛠 Tech Stack
+## Project Structure
 
-| Component | Technology | Description |
-| :--- | :--- | :--- |
-| **Language** | Python 3.10+ | Core logic and data processing. |
-| **Data Processing** | Pandas, NumPy | Data manipulation and vectorization. |
-| **Machine Learning** | Scikit-learn, XGBoost | Modeling (Clustering, Classification, Regression). |
-| **Tracking** | MLflow | Experiment tracking and model registry. |
-| **API Backend** | FastAPI, Uvicorn | REST API for serving predictions. |
-| **Frontend (App)** | Next.js, React, Tailwind | Modern web interface for end-users. |
-| **Dashboard** | Streamlit | Interactive tool for model management and analysis. |
-| **Containerization** | Docker (Optional) | For consistent deployment environments. |
+- `app/` FastAPI app and Streamlit dashboard.
+- `src/` data pipeline, feature engineering, modeling, training pipeline.
+- `frontend/` Next.js app and Inngest workflows.
+- `dataset/` or `datasets/` default data location.
+- `artifacts/` trained models and feature stores (local).
+- `reports/` strategic reports and summaries.
+- `mlruns/` local MLflow tracking.
+- `artifacts_cache/` cached downloads (B2 inputs and outputs).
 
-## 📂 Project Structure
+## Requirements
 
-| Directory | Description |
-| :--- | :--- |
-| `app/` | Contains the backend API (`main.py`) and Streamlit dashboard (`dashboard.py`). |
-| `src/` | Core source code for data pipelines, feature engineering, and modeling. |
-| `frontend/` | Source code for the Next.js web application. |
-| `artifacts/` | Stores trained models (`.joblib`), feature stores, and summaries. |
-| `reports/` | Generated markdown reports and strategic summaries. |
-| `research/` | Research documents, flowcharts, and plans. |
-| `mlruns/` | MLflow local tracking data. |
+- Python 3.10+ (tested with 3.11+)
+- Node.js 18+ (frontend)
+- Git
 
-## ⚡ Installation & Setup
+## Configuration
 
-### Prerequisites
-*   Python 3.10 or higher
-*   Node.js 18+ (for Frontend)
-*   Git
+### Backend (.env or environment variables)
 
-### 1. Clone the Repository
-```bash
-git clone <repository-url>
-cd Customer-Segmentation-Retention-Analysis
+Firestore (optional but required for queueing and model metadata):
+```
+FIREBASE_SERVICE_ACCOUNT_PATH=C:\path\to\service-account.json
 ```
 
-### 2. Backend Setup
-It is recommended to use a virtual environment.
-
-```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate (Windows)
-.\venv\Scripts\activate
-
-# Activate (Mac/Linux)
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
+Backblaze B2 (optional artifact and dataset storage):
 ```
-
-### Firestore (metadata storage)
-Set this environment variable for the backend:
-```bash
-FIREBASE_SERVICE_ACCOUNT_PATH=C:\\path\\to\\service-account.json
-```
-
-### 3. Frontend Setup (Next.js)
-
-```bash
-cd frontend
-npm install
-# or
-yarn install
-```
-
-## 🖥 Usage
-
-### Backblaze B2 (Model Storage)
-Set these environment variables before training if you want artifacts uploaded to B2:
-```bash
 B2_BUCKET=CSR-Bucket
 B2_ENDPOINT=s3.us-east-005.backblazeb2.com
 B2_REGION=us-east-005
 B2_KEY_ID=your_key_id
 B2_APP_KEY=your_app_key
 ```
-Artifacts will be uploaded to:
+
+CORS (optional):
 ```
-tenants/{tenant_id}/models/
-```
-
-### 1. Train the Models
-Run the training pipeline to process data, train models, and generate artifacts.
-
-```bash
-# Run from the root directory
-python src/train_pipeline.py --tenant-id tenant_123
-
-# Optional: Specify custom data path
-# python src/train_pipeline.py --data-path path/to/data.xlsx
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
-### 2. Run the API (Backend)
-Start the FastAPI server to serve predictions.
+### Frontend (`frontend/.env.local`)
 
-```bash
-# Run from the root directory
+```
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_FIREBASE_API_KEY=your_key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_domain
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_bucket
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+```
+
+## Running Locally
+
+### 1) Backend setup
+
+```
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 2) Start the API
+
+```
 uvicorn app.main:app --reload --port 8000
 ```
-*   API Docs: `http://localhost:8000/docs`
-*   Health Check: `http://localhost:8000/health`
 
-### 3. Run the Dashboard (Streamlit)
-For model insights and retraining.
+### 3) Train the models (direct)
 
-```bash
+```
+python src/train_pipeline.py --tenant-id tenant_123
+```
+
+Default dataset path is `dataset/OnlineRetail.csv` (or `datasets/OnlineRetail.csv` if `dataset/` is missing).
+
+### 4) Streamlit dashboard
+
+```
 streamlit run app/dashboard.py
 ```
 
-### 4. Run the Frontend (Next.js)
-For the user-facing application.
+### 5) Frontend
 
-```bash
+```
 cd frontend
+npm install
 npm run dev
 ```
-*   Access the app at `http://localhost:3000`
 
-## 🔌 API Documentation
+### 6) Inngest (required for queued training/predictions)
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/health` | Returns the API status. |
-| `POST` | `/predict` | Predicts segment, churn prob, and LTV for a customer. |
+```
+cd frontend
+npx inngest-cli@latest dev -u http://localhost:3000/api/inngest
+```
 
-**Example Request (`/predict`):**
+## Queueing and Jobs
+
+- The Next.js app uses Inngest to trigger `/train` and `/predict_job`.
+- The API stores queue jobs in Firestore via `/queue`.
+- If Firestore is not configured, queues and model metadata will be empty and the UI will not reflect training progress.
+
+## API Overview
+
+All API calls require the `X-Tenant-Id` header.
+
+Example:
+```
+curl -H "X-Tenant-Id: tenant_123" http://127.0.0.1:8000/health
+```
+
+### Core endpoints
+
+- `GET /health`
+- `POST /upload` (multipart: `tenant_id`, `file`, optional `mapping` JSON)
+- `POST /train`
+- `GET /metrics`
+- `GET /segments`
+- `GET /models`
+- `GET /models/{model_id}`
+- `GET /models/{model_id}/json`
+- `GET /models/{model_id}/dataset`
+- `GET /models/{model_id}/customers/{customer_id}/exists`
+- `GET /models/default`
+- `POST /models/default`
+- `GET /predictions`
+- `GET /predictions/{prediction_id}`
+- `PATCH /predictions/{prediction_id}`
+- `DELETE /predictions/{prediction_id}`
+- `GET /predictions/{prediction_id}/download`
+- `GET /predictions/{prediction_id}/csv`
+- `POST /predict`
+- `POST /predict_job`
+- `POST /queue`
+- `GET /queue`
+- `PATCH /queue/{queue_id}`
+- `DELETE /models/{model_id}`
+
+### Predict request example
+
 ```json
 {
   "customer_id": 12345,
@@ -181,19 +186,8 @@ npm run dev
 }
 ```
 
-## 📊 Model Details
+## Notes
 
-### 1. Segmentation (Unsupervised)
-*   **Algorithm:** K-Means Clustering.
-*   **Features:** Recency, Frequency, Monetary (RFM), and engagement metrics.
-*   **Goal:** Group customers into behavioral personas (e.g., "Champions", "At Risk").
-
-### 2. Churn Prediction (Supervised)
-*   **Algorithm:** XGBoost (Selected as best performer over Logistic Regression).
-*   **Target:** `churn_label` (1 if no purchase in window, 0 otherwise).
-*   **Goal:** Identify customers likely to leave in the next 30-90 days.
-
-### 3. Lifetime Value (LTV)
-*   **Algorithm:** XGBoost Regressor.
-*   **Target:** `future_spend` (Total spend in the next horizon).
-*   **Goal:** Estimate the potential revenue from each customer.
+- Training triggered via `/train` runs `src/train_pipeline.py` in a subprocess.
+- For B2-backed datasets, the training pipeline caches inputs under `artifacts_cache/` and stores the original `b2://...` paths in Firestore.
+- The backend expects only the `X-Tenant-Id` header; Firebase tokens are passed by the frontend but are not validated server-side in this repo.
